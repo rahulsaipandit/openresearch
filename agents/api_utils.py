@@ -236,7 +236,7 @@ BASE_WAIT_SEC = 60  # default wait on rate limit (API may return a shorter value
 class _Backend:
     """Wraps one (provider, model) pair and makes API calls."""
 
-    def __init__(self, provider: str, api_key: str, model: str):
+    def __init__(self, provider: str, api_key: str, model: str, base_url: Optional[str] = None):
         self.provider = provider
         self.model    = model
 
@@ -248,6 +248,14 @@ class _Backend:
             import openai
             self._client         = openai.OpenAI(api_key=api_key)
             self._rate_limit_exc = openai.RateLimitError
+        elif provider == "openai_compatible":
+            # Local LLM via OpenAI-compatible endpoint (LM Studio, Ollama, etc.)
+            import openai as _openai
+            self._client         = _openai.OpenAI(
+                api_key=api_key or "local",
+                base_url=base_url or "http://localhost:1234/v1",
+            )
+            self._rate_limit_exc = _openai.RateLimitError
         elif provider == "minimax":
             import openai as _openai
             self._client         = _openai.OpenAI(
@@ -256,7 +264,7 @@ class _Backend:
             )
             self._rate_limit_exc = _openai.RateLimitError
         else:
-            raise ValueError(f"Unknown LLM provider '{provider}'. Use 'anthropic', 'openai', or 'minimax'.")
+            raise ValueError(f"Unknown LLM provider '{provider}'. Use 'anthropic', 'openai', 'openai_compatible', or 'minimax'.")
 
     def call(self, system: str, messages: list[dict], max_tokens: int,
              verbose: bool = False) -> str:
@@ -272,6 +280,8 @@ class _Backend:
                     return self._call_anthropic(system, messages, max_tokens)
                 elif self.provider == "minimax":
                     return self._call_minimax(system, messages, max_tokens)
+                elif self.provider == "openai_compatible":
+                    return self._call_openai_compatible(system, messages, max_tokens)
                 else:
                     return self._call_openai(system, messages, max_tokens)
 
@@ -339,6 +349,21 @@ class _Backend:
             )
         return content
 
+    def _call_openai_compatible(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        """Call a local OpenAI-compatible server (LM Studio, Ollama, etc.)."""
+        resp = self._client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "system", "content": system}] + messages,
+        )
+        content = resp.choices[0].message.content
+        if not content:
+            finish = resp.choices[0].finish_reason
+            raise ValueError(
+                f"Local model '{self.model}' returned empty response (finish_reason={finish!r})."
+            )
+        return content
+
     def _call_minimax(self, system: str, messages: list[dict], max_tokens: int) -> str:
         """Call MiniMax via its OpenAI-compatible API.
 
@@ -399,6 +424,58 @@ class LLMClient:
     def single(cls, provider: str, api_key: str, model: str) -> "LLMClient":
         """Convenience constructor for a single provider."""
         return cls([(provider, api_key, model)])
+
+    @classmethod
+    def from_config(cls, config_path: str = "config.yaml") -> "LLMClient":
+        """
+        Build an LLMClient from the new config.yaml format.
+
+        Reads the llm.provider_chain list and builds a fallback chain.
+        Supports providers: anthropic, openai, openai_compatible, minimax.
+        """
+        import yaml
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+
+        chain = cfg.get("llm", {}).get("provider_chain", [])
+        if not chain:
+            raise ValueError("No llm.provider_chain entries found in config.yaml.")
+
+        backends: list[tuple] = []
+        for entry in chain:
+            provider = entry.get("provider", "")
+            api_key  = entry.get("api_key", "") or ""
+            model    = entry.get("model", "")
+            base_url = entry.get("base_url")
+
+            if not provider or not model:
+                logger.warning(f"Skipping malformed provider chain entry: {entry}")
+                continue
+
+            # Build _Backend with base_url for openai_compatible
+            if provider == "openai_compatible":
+                backends.append((provider, api_key, model, base_url))
+            else:
+                backends.append((provider, api_key, model))
+
+        if not backends:
+            raise ValueError("No valid providers in llm.provider_chain.")
+
+        # Build backends, threading base_url through for openai_compatible
+        built: list[_Backend] = []
+        for entry in backends:
+            if len(entry) == 4:
+                p, k, m, url = entry
+                built.append(_Backend(p, k, m, base_url=url))
+            else:
+                p, k, m = entry
+                built.append(_Backend(p, k, m))
+
+        inst = cls.__new__(cls)
+        inst._backends = built
+        inst.provider  = built[0].provider
+        inst.model     = built[0].model
+        return inst
 
     def create(
         self,

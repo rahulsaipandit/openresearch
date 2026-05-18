@@ -1,4 +1,5 @@
-﻿from .problem_spec import ProblemSpec, TaskType, EvalMetric, Constraint
+# Legacy ML schemas (kept for backwards compatibility)
+from .problem_spec import ProblemSpec, TaskType, EvalMetric, Constraint
 from .data_health import (
     DataHealthReport, FeatureInsight, DataQualityFlag,
     CorrelationPair, Severity,
@@ -11,20 +12,32 @@ from .execution_result import (
     EvaluationReport, MethodScore, RiskFlag, FailedMethodSummary,
 )
 
+# Stock Research schemas
+from .stock import (
+    ValuationSummary, SentimentSummary, ResearchBrief, StockPipelineInput,
+)
+
+# Executive Board schemas
+from .board import (
+    OrgSnapshot, TeamStatus, OrgMetrics, Project, Risk, Decision,
+    Initiative, Conflict, ActionItem, BoardMemberView, ConflictReport,
+    BoardBriefing, BoardSessionInput,
+)
+
 __all__ = [
-    # problem_spec
+    # stock
+    "ValuationSummary", "SentimentSummary", "ResearchBrief", "StockPipelineInput",
+    # board
+    "OrgSnapshot", "TeamStatus", "OrgMetrics", "Project", "Risk", "Decision",
+    "Initiative", "Conflict", "ActionItem", "BoardMemberView", "ConflictReport",
+    "BoardBriefing", "BoardSessionInput",
+    # legacy ML
     "ProblemSpec", "TaskType", "EvalMetric", "Constraint",
-    # data_health
     "DataHealthReport", "FeatureInsight", "DataQualityFlag",
     "CorrelationPair", "Severity",
-    # methods_catalog
     "MethodSpec", "MethodsCatalog", "ComplexityLevel",
-    # dataset_diagnostics
     "DatasetDiagnosticsReport",
-    # data_prep
     "DataPrepReport",
-    # execution_result
     "ExecutionResult", "ExecutionStatus", "ModelArtifact",
     "EvaluationReport", "MethodScore", "RiskFlag", "FailedMethodSummary",
 ]
-
