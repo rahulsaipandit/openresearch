@@ -1,0 +1,44 @@
+{
+  "mcpServers": {
+    "brave-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "" }
+    },
+    "fetch": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "./research_areas"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "" }
+    },
+    "equibles": {
+      "type": "sse",
+      "url": "http://localhost:8081/sse",
+      "comment": [
+        "Self-hosted financial data MCP server. Run locally via Docker:",
+        "  git clone https://github.com/daniel3303/Equibles && cd Equibles",
+        "  docker compose up -d",
+        "Web portal: http://localhost:8080  |  MCP SSE: http://localhost:8081/sse",
+        "Serves: SEC 10-K/10-Q/8-K (full-text), 13F institutional holdings,",
+        "  Form 3/4 insider trades, congressional disclosures, FINRA short volume,",
+        "  SEC fails-to-deliver, FRED economic indicators, CFTC futures, CBOE VIX/put-call,",
+        "  daily prices + technical indicators. No cloud dependency, no API keys required.",
+        "Optional free keys: FINRA (gateway.finra.org), FRED (fred.stlouisfed.org).",
+        "Set mcp.equibles.enabled: true in config.yaml once the container is running."
+      ]
+    },
+    "openresearch": {
+      "command": "python",
+      "args": ["mcp_server.py"],
+      "cwd": ".",
+      "comment": "Phase 7 (planned): exposes run_stock_research, run_board_session, run_interview_prep as MCP tools"
+    }
+  }
+}

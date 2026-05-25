@@ -85,6 +85,98 @@ executive_board:
   linear_team_keys: []             # e.g. ["engineering", "product", "platform"]
 
 
+# ── Interview Research ────────────────────────────────────────────────────────
+# Prepares for job interviews: fit analysis, company intel, tailored questions,
+# STAR answers, and a tailored resume generated from the candidate's profile.
+
+interview_research:
+  # depth: "full" runs all 5 nodes including ResumeWriter (recommended).
+  # depth: "quick" skips company research and resume writing — for testing.
+  default_depth: full
+
+  # Local storage directory for profile, application tracker, and skills bank.
+  # All three files are written here: profile.json, applications.json, skills.json
+  # Also generates applications.md (human-readable markdown table).
+  data_dir: data
+
+
+# ── MCP (Model Context Protocol) ─────────────────────────────────────────────
+# Enables live web search for company research and vault export to Tolaria.
+#
+# brave_search_key:
+#   Enables live web research in CompanyResearcherAgent (Node 2).
+#   Without it, company intel uses LLM training knowledge only.
+#   Get a free key at https://api.search.brave.com/
+#
+# tolaria:
+#   Saves research briefs and tailored resumes to your Tolaria vault.
+#   Tolaria exposes an Obsidian-compatible Local REST API at localhost:27123.
+#   Set export_to_tolaria=true in POST /api/interview-prep or /api/stock-research.
+
+mcp:
+  brave_search_key: ""            # Brave Search API key — api.search.brave.com (free tier: 2000 req/mo)
+
+  # ── Equibles (self-hosted financial data MCP server) ───────────────────────
+  # Provides SEC filings (full-text), 13F institutional holdings, insider trades
+  # (Form 3/4), congressional disclosures, FINRA short volume, SEC fails-to-deliver,
+  # FRED economic indicators, CFTC futures positioning, CBOE VIX/put-call, and
+  # daily prices + technical indicators — all from your own machine, no cloud
+  # dependency, no API keys required.
+  #
+  # Setup (one time):
+  #   git clone https://github.com/daniel3303/Equibles && cd Equibles
+  #   docker compose up -d
+  #
+  # After the containers are up, set enabled: true below.
+  # Web portal: http://localhost:8080  |  MCP SSE: http://localhost:8081/sse
+  #
+  # Optional free API keys for additional data:
+  #   finra_key:  https://gateway.finra.org/  (FINRA short volume)
+  #   fred_key:   https://fred.stlouisfed.org/ (FRED economic indicators)
+  equibles:
+    enabled: false                # set true once `docker compose up` is running
+    server_url: "http://localhost:8081"   # Equibles MCP server (port 8081)
+    # tickers: []                 # leave empty to sync all tickers, or restrict:
+    #   tickers: ["AAPL", "NVDA", "MSFT"]
+
+  tolaria:
+    enabled: false                # set true once Tolaria server is running
+    server_url: "http://localhost:27123"   # Tolaria / Obsidian Local REST API endpoint
+    api_key: ""                   # leave blank if no auth required (local use)
+    vault_folder: "OpenResearch"  # root folder in your Tolaria/Obsidian vault
+    local_fallback_dir: "output"  # fallback directory when Tolaria is unreachable
+
+
+# ── Real Estate Research ─────────────────────────────────────────────────────
+# Analyses migration demand, labor market, housing, cost-of-living, and
+# climate/flood risk for a target city+state (+ optional address for property-level
+# flood zone lookup).
+#
+# All data sources are free or have a free tier.
+# BLS and Census have no key requirement. FRED, BEA, and Census accept keys for
+# higher rate limits (still work without keys at lower request limits).
+
+real_estate_research:
+  data_sources:
+    fred_api_key: ""          # api.stlouisfed.org — free, get at fred.stlouisfed.org/docs/api/api_key.html
+    bea_api_key: ""           # apps.bea.gov/api — free, register at apps.bea.gov/API/signup
+    census_api_key: ""        # api.census.gov — free, get at api.census.gov/data/key_signup.html
+    walk_score_api_key: ""    # api.walkscore.com — free tier 1k req/day, register at walkscore.com/professional/api.php
+    noaa_cdo_token: ""        # ncei.noaa.gov/cdo-web/api — free, get at ncei.noaa.gov/cdo-web/token
+    first_street_api_key: ""  # firststreet.org — free research tier, api.firststreet.org
+    rentcast_api_key: ""      # api.rentcast.io — free tier 50 req/mo; property-specific rent estimates
+
+  # Local cache directories for Zillow/Redfin/IRS bulk files.
+  # If empty, the pipeline downloads CSVs on first run (adds ~10-30s latency).
+  # Recommended: pre-download monthly and cache locally.
+  zillow_cache_dir: "data/realestate/zillow/"   # put Zillow Research CSVs here
+  redfin_cache_dir: "data/realestate/redfin/"   # put Redfin Data Center TSV here
+  irs_cache_dir: "data/realestate/irs/"         # put IRS SOI migration CSV extracts here
+
+  # Default documents directory for real estate doc ingestion
+  documents_dir: "data/realestate/docs/"        # PDFs, MDs, TXTs about the property/market
+
+
 # ── OCR (Scanned PDF Support) ─────────────────────────────────────────────────
 # Automatically detects image-based (scanned) PDFs and OCRs them using
 # Claude vision. Uses the Anthropic key from llm.provider_chain by default.

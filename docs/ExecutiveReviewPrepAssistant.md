@@ -31,14 +31,14 @@ Each layer solves a different executive problem.
 
 Each layer has defined inputs, outputs, and direction of flow:
 
-| Layer | Accepts | Produces |
-|---|---|---|
-| Memory | Raw events, decisions, facts | Contextual historical records |
-| Reasoning | Memory context + graph query results | Inferred risks and patterns |
-| Executive Heuristics | Signal patterns from Reasoning | Matched heuristic recommendations with confidence |
-| Agents | Heuristic matches + reasoning output + tools | Structured analysis results |
-| Workflows | Agent outputs + trigger conditions | Orchestrated review pipeline results |
-| Org Graph Intelligence | Enterprise data + agent graph queries | Node/edge traversal results |
+| Layer                  | Accepts                                      | Produces                                          |
+|------------------------|----------------------------------------------|---------------------------------------------------|
+| Memory                 | Raw events, decisions, facts                 | Contextual historical records                     |
+| Reasoning              | Memory context + graph query results         | Inferred risks and patterns                       |
+| Executive Heuristics   | Signal patterns from Reasoning               | Matched heuristic recommendations with confidence |
+| Agents                 | Heuristic matches + reasoning output + tools | Structured analysis results                       |
+| Workflows              | Agent outputs + trigger conditions           | Orchestrated review pipeline results              |
+| Org Graph Intelligence | Enterprise data + agent graph queries        | Node/edge traversal results                       |
 
 Data flows top-down for analysis; bottom-up for context enrichment.
 The Heuristics Layer acts as a filter between Reasoning and Agents: agents consume matched heuristics, not raw reasoning signals.
@@ -62,7 +62,7 @@ The Heuristics Layer acts as a filter between Reasoning and Agents: agents consu
         │                    │                    │
 ┌───────▼────────┐ ┌────────▼────────┐ ┌────────▼────────┐
 │ Review Agent   │ │ Risk Agent      │ │ Alignment Agent │
-│                 │ │                 │ │                 │
+│                │ │                 │ │                 │
 └───────┬────────┘ └────────┬────────┘ └────────┬────────┘
         │                   │                   │
         └────────────┬──────┴──────┬────────────┘
@@ -152,13 +152,13 @@ Stale org data (departed VPs, disbanded teams, shipped roadmap items) silently d
 
 ## Rebuild Schedule
 
-| Node Type | Rebuild Trigger | Max Acceptable Staleness |
-|---|---|---|
-| VP / Org structure | HR system webhook or nightly sync | 24 hours |
-| Roadmap / Initiative | Jira/ADO sync on ticket update | 4 hours |
-| KPI / OKR | Metrics pipeline push | 1 hour |
-| Risk / Incident | Real-time event stream | 15 minutes |
-| Dependency edges | Cascading on any connected node change | Same as trigger node |
+| Node Type            | Rebuild Trigger                        | Max Acceptable Staleness |
+|----------------------|----------------------------------------|--------------------------|
+| VP / Org structure   | HR system webhook or nightly sync      | 24 hours                 |
+| Roadmap / Initiative | Jira/ADO sync on ticket update         | 4 hours                  |
+| KPI / OKR            | Metrics pipeline push                  | 1 hour                   |
+| Risk / Incident      | Real-time event stream                 | 15 minutes               |
+| Dependency edges     | Cascading on any connected node change | Same as trigger node     |
 
 ## Handling Incomplete or Contradictory Data
 
@@ -309,13 +309,13 @@ Handles:
 
 The Chief of Staff Agent must not be a catch-all. It delegates to other agents using these rules:
 
-| Trigger | Delegates To | Condition |
-|---|---|---|
-| New review materials uploaded | Executive Review Agent | When deck/KPI/roadmap files are detected |
-| Roadmap or dependency change | Cross-Org Alignment Agent | When a graph node change has cross-org edges |
-| Repeated slippage pattern detected | Organizational Health Agent | When the same team misses commitments ≥2 cycles |
-| Historical context needed | Strategic Memory Agent | When analysis references past decisions or prior reviews |
-| All other follow-ups / reminders | Chief of Staff handles directly | Default path |
+| Trigger                            | Delegates To                    | Condition                                                |
+|------------------------------------|---------------------------------|----------------------------------------------------------|
+| New review materials uploaded      | Executive Review Agent          | When deck/KPI/roadmap files are detected                 |
+| Roadmap or dependency change       | Cross-Org Alignment Agent       | When a graph node change has cross-org edges             |
+| Repeated slippage pattern detected | Organizational Health Agent     | When the same team misses commitments ≥2 cycles          |
+| Historical context needed          | Strategic Memory Agent          | When analysis references past decisions or prior reviews |
+| All other follow-ups / reminders   | Chief of Staff handles directly | Default path                                             |
 
 The Chief of Staff Agent must emit a delegation log entry for each handoff so the orchestrator can trace which agent produced each output.
 
@@ -510,13 +510,13 @@ This system processes highly sensitive executive data. Security is not optional.
 
 ## Data Classification
 
-| Data Type | Sensitivity | Storage Policy |
-|---|---|---|
-| OKRs / KPIs | Confidential | Encrypted at rest, never synced |
-| Staffing data | Restricted | Local only, no cloud backup |
-| Roadmap details | Confidential | Encrypted at rest |
-| Historical decisions | Restricted | Local only |
-| Action items | Internal | May sync if user explicitly opts in |
+| Data Type            | Sensitivity  | Storage Policy                      |
+|----------------------|--------------|-------------------------------------|
+| OKRs / KPIs          | Confidential | Encrypted at rest, never synced     |
+| Staffing data        | Restricted   | Local only, no cloud backup         |
+| Roadmap details      | Confidential | Encrypted at rest                   |
+| Historical decisions | Restricted   | Local only                          |
+| Action items         | Internal     | May sync if user explicitly opts in |
 
 ## Required Controls
 

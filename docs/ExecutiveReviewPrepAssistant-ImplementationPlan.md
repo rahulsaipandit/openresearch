@@ -26,7 +26,7 @@ The implementation follows the layered architecture described in the design docu
              │
     ┌────────▼────────┐
     │ LLM Integration │
-    │ (@page-agent/llms│
+    │(@page-agent/llms│
     └─────────────────┘
 ```
 
