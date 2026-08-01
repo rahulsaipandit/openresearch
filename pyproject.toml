@@ -32,6 +32,8 @@ dependencies = [
     "structlog>=23.0.0",
     "tenacity>=8.2.0",
     "rich>=13.0.0",
+    # MCP server (Phase 7 — exposes pipelines as Claude Code / Desktop tools)
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
