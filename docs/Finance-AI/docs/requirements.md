@@ -136,22 +136,34 @@ The system should return a comprehensive analysis in under a minute using recent
 
 ## Recommended Open Source Stack
 
-- `EdgarTools`: use as the primary SEC filings and insider/ownership data engine. It is Python-native, MIT-licensed, and built for AI-friendly pipelines.
-- `OpenBB`: use for broad market data ingestion, fundamentals, equities/crypto/macro coverage, and backend data orchestration.
-- `FinanceToolkit`: use for financial ratios, valuation models, technical metrics, and structured analysis functions.
-- `OpenTerminalUI`: use as an architectural and local-LLM integration reference for FastAPI + frontend design and evidence-backed AI agent workflows.
-- Keep `Qlib` and `LEAN` as optional advanced modules for future quant research or execution capabilities, not MVP core.
-- Avoid direct reuse of `FinceptTerminal` and `Neuberg` because of restrictive licensing and incompatible architecture. Use them only for UX inspiration if needed.
+*(Verified 2026-08-01 against primary sources — corrections from the original manual pass noted below.)*
+
+- `EdgarTools`: primary candidate for SEC filings and insider/ownership data if a fallback to Equibles is ever needed. **Verified:** MIT license confirmed; README explicitly covers Form 4 insider transactions and 13F institutional holdings as structured objects, plus a built-in MCP server. Good fit either as an Equibles alternative or a supplementary data source.
+- `OpenBB`: broad market data reference. **Correction:** license is **AGPLv3**, not permissive — this is a copyleft license with network-use (SaaS) obligations. Do not bundle/link OpenBB code directly into a distributed app without legal review; treat it as architecture/data-source inspiration only, not a dependency to import. (Star count ~71k, higher than originally estimated.)
+- `FinanceToolkit`: **verified** MIT license; genuinely covers 80+ ratios plus valuation models (DCF-adjacent, DuPont, WACC, Altman Z-Score) and risk metrics (VaR, CDaR, drawdown) — the "200+" figure is metrics overall, not ratios alone. Reasonable to depend on directly for the trend-analysis and comparison features (#3, #7) if you want ratio computation without re-deriving formulas.
+- `OpenTerminalUI`: architectural reference only, not verified in this pass — treat claims about it with the same skepticism as the rest until checked directly.
+- `ValueCell` (github.com/ValueCell-ai/valuecell): **verified real**, Apache 2.0, ~11k stars, actively developed (430 commits, downloadable builds). Orchestrator/agent-separation pattern is legitimate and could inform a "front-end panel talks to one orchestrator, orchestrator dispatches to per-domain pipelines" design for the shared Tauri shell. **Correction:** its Strategy Agent is crypto-exchange-focused (Binance/OKX/Hyperliquid), not general equities — useful for the orchestration pattern only, not for stock-strategy logic.
+- `stock-analyzer-bot` (Pranav082001): **correction** — README lists Streamlit as a planned improvement, not a built feature; it currently runs as LangChain + OpenAI function-calling only, no UI. Useful only as a minimal prompt-pattern reference, not as reusable code, and has no license file (don't fork/reuse code without checking with the author).
+- Keep `Qlib` and `LEAN` as optional advanced modules for future quant research or execution capabilities, not MVP core (not re-verified this pass).
+- Avoid direct reuse of `FinceptTerminal` and `Neuberg` because of restrictive licensing and incompatible architecture (not re-verified this pass — carry forward prior caution).
+
+### Source verification notes
+
+- Both Reddit threads originally cited (r/Wallstreetbetsnew and r/ChatGPTPromptGenius) trace to blog posts by **Austin Starks, founder of NexusTrade** — cross-posted to Reddit, not organic community writeups. The technical claims in them (base LLMs lack real-time data and hallucinate; financial NL queries need function-calling/structured output to be reliable) check out against the primary articles and are reasonable engineering advice, but treat them as vendor perspective, not independent consensus. The actual Reddit comment threads were unreachable (blocked fetch), so any claimed "community pushback" is unverified — don't cite it as if confirmed.
+- `stocktaper.com` (the explicit product reference) is a real, live product — $7.99/mo or $63/yr, 7-day free trial. Confirmed sections: fundamentals ("Decoded"), watchlist/earnings/insider alerts, Congress-trade tracking, 1v1 stock comparison, and sector "Radar." **It does not appear to have a distinct 5-year trend view or ETF-specific ownership breakdown** — those two requirements (#7, part of #6) go beyond what the named reference product itself offers, so they're a genuine differentiator/extra scope, not just parity with Stocktaper.
 
 ## UX and Interaction
 
-- Query box for natural language questions
-- Watchlist panel with up to 20 stocks
-- Comparison mode for two stock symbols
-- Earnings summary view for the latest quarter
-- Trend dashboard with charts for five-year and one-year summaries
-- Alerts panel for insider/Congress trades
-- Clear disclaimer: research assistant, not investment advice
+- Tauri app shell with navigation across verticals: Stock Research, Executive Board, Interview Prep, Real Estate — each a panel/route calling its existing FastAPI endpoint
+- Stock Research panel:
+  - Query box for natural language questions
+  - Watchlist panel with up to 20 stocks
+  - Comparison mode for two stock symbols
+  - Earnings summary view for the latest quarter
+  - Trend dashboard with charts for five-year and one-year summaries
+  - Alerts panel for insider/Congress trades (requires Equibles running)
+  - Clear disclaimer: research assistant, not investment advice
+- Other verticals (Board/Interview/RealEstate) reuse the same shell chrome and just need thin result-rendering views for their existing `BoardBriefing` / `InterviewPrepBrief` / `RealEstateBrief` schemas — no new backend logic required for those three.
 
 ## Personal Memory & Context System
 

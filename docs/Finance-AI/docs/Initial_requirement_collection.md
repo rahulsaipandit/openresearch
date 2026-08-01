@@ -37,7 +37,11 @@ UI	                            ❌ none exists anywhere — only a FastAPI serve
 So the repo is materially further along than the Finance-AI notes assumed (a working LLM synthesis pipeline with real data sources already wired), and the actual gaps are: watchlist, comparison, earnings-call summarization, trend charts, personal memory, and — the big one — no frontend at all yet.
 
 A few things only you can decide before I scope this:
+My recommendation: skip LangChain for orchestration, but consider LiteParse-style parsing for document ingestion — these are two different concerns.
 
+docs/design.md already made and documented this call: LangGraph was evaluated and deliberately dropped in favor of plain async Python pipelines (it's still listed in pyproject.toml but unused/legacy), because your agents already do the two things LangChain chains would give you — structured LLM calls parsed into Pydantic with a deterministic fallback — without the abstraction/version-churn overhead. Reintroducing LangChain would be reversing a decision that's already working, for no new capability.
+
+Where the Twitter/LlamaIndex reference is relevant is the earnings-call and filings summarization gap (#5) — a deterministic, citation-preserving PDF/transcript parser like LiteParse would plug directly into your existing "evidence-backed, source-cited" requirement, feeding structured/cited text into fundamentals_analyst.py or a new earnings-summarizer agent rather than replacing anything. 
 ----------------------
 
 Initial Personal Research to collect Finance App feasability
