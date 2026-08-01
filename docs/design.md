@@ -2,8 +2,8 @@
 
 **Date:** 2026-05-17
 **Updated:** 2026-05-23
-**Status:** Phases 1–4 complete + Phase 4 extensions; Phase 6 complete (all gaps closed); Phase 7 (MCP server) planned; Equibles integration complete; Phase 8 (Real Estate Research) in design
-**Scope:** Domain-agnostic research pipeline platform — Stock Research ✅, Executive Board ✅, Interview Prep ✅ (full parity), Tolaria MCP ✅, Equibles financial data ✅, Real Estate Research 🔲 (Phase 8)
+**Status:** Phases 1–8 complete; Chrome Extension (Phase 5) pending
+**Scope:** Domain-agnostic research pipeline platform — Stock Research ✅, Executive Board ✅, Interview Prep ✅, Real Estate ✅, MCP Server ✅, Tolaria ✅, Equibles ✅, Equibles financial data ✅, Real Estate Research 🔲 (Phase 8)
 
 ---
 
@@ -42,12 +42,12 @@ Agents and skills shared across research areas live at the repo level (`agents/a
 
 ### Currently Implemented Research Areas
 
-| Area            | Folder                 | Status                    |
-|-----------------|------------------------|---------------------------|
-| Stock Research  | `agents/stock/`        | ✅ Complete                |
-| Executive Board | `agents/board/`        | ✅ Complete                |
-| Interview Prep  | `agents/interview/`    | ✅ Complete (Phase 6 full) |
-| Real Estate     | `agents/realestate/`   | 🔲 Phase 8 (in design)    |
+| Area            | Folder                 | Status        |
+|-----------------|------------------------|---------------|
+| Stock Research  | `agents/stock/`        | ✅ Complete   |
+| Executive Board | `agents/board/`        | ✅ Complete   |
+| Interview Prep  | `agents/interview/`    | ✅ Complete   |
+| Real Estate     | `agents/realestate/`   | ✅ Complete   |
 
 ---
 
@@ -778,7 +778,7 @@ OpenResearch can expose its research pipelines as MCP tools so that Claude Code,
 | `run_board_session`  | `ExecutiveBoardPipeline` | `mode`, `context`, `raw_paste`            | `BoardBriefing` (JSON)      |
 | `run_interview_prep` | `InterviewPipeline`      | `jd_text`, `profile_text`, `company_name` | `InterviewPrepBrief` (JSON) |
 
-#### MCP server entry point (`mcp_server.py`, planned)
+#### MCP server entry point (`mcp_server.py`) ✅ Built
 
 ```python
 from mcp.server import MCPServer
@@ -818,8 +818,8 @@ Once registered, a Claude Code session can call `run_stock_research(ticker="NVDA
 | Research Area   | Consumes                        | Status   | Benefit                                                                                                                                       |
 |-----------------|---------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------|
 | Stock Research  | `equibles`                      | ✅ Done  | 13F institutional holders, FINRA short interest + FTD, Form 3/4 insider trades, congressional disclosures, technical indicators, SEC full-text search — all local, no keys, no rate limits |
-| Stock Research  | `brave-search`, `fetch`         | Planned  | Live web search supplements yfinance + NewsAPI; fetch investor relations pages directly                                                       |
-| Executive Board | `filesystem`                    | Planned  | Drop org documents into `research_areas/board/data/raw/` and the pipeline reads them via MCP filesystem rather than the documents integration |
+| Stock Research  | `brave-search`, `fetch`         | Phase 9  | Live web search supplements yfinance + NewsAPI; fetch investor relations pages directly                                                       |
+| Executive Board | `filesystem`                    | Phase 9  | Drop org documents into `research_areas/board/data/raw/` and the pipeline reads them via MCP filesystem rather than the documents integration |
 | Interview Prep  | `brave-search`, `fetch`         | ✅ Done  | `CompanyResearcherAgent` runs 3 Brave Search queries → injects live Glassdoor/blog intel before LLM call; falls back gracefully              |
 
 ### 6.5 Tolaria Vault Integration ✅ Complete
@@ -850,7 +850,7 @@ A 200/201/204 response means the note appeared in the vault immediately.
 ├── stock/
 │   └── <TICKER>-<date>.md           # ResearchBrief (verdict, bull/bear, fundamentals)
 └── board/
-    └── board-briefing-<date>.md     # BoardBriefing (planned — Phase 7)
+    └── board-briefing-<date>.md     # BoardBriefing (exported when export_to_tolaria=true)
 ```
 
 #### Config
@@ -885,9 +885,9 @@ If `server_url` is not set or the vault is unreachable, `TolariaClient` writes t
 | 9    | `schemas/stock.py` — `InstitutionalSnapshot`, `MarketStructureData`, `TechnicalIndicators`  | Phase 6 ext | ✅ Done |
 | 10   | `ResearchSynthesizerAgent` extended — Equibles data in prompt + typed schema attachment      | Phase 6 ext | ✅ Done |
 | 11   | `StockResearchPipeline` — `MCPClient` wired end-to-end through all nodes                    | Phase 6 ext | ✅ Done |
-| 12   | Upgrade `MCPClient` to full MCP stdio/SSE transport (replace direct HTTP calls)              | Phase 7 | Planned |
-| 13   | `mcp_server.py` — expose all three pipelines as MCP tools                                    | Phase 7 | Planned |
-| 14   | Register `openresearch` server in `.mcp.json` for Claude Code / Claude Desktop               | Phase 7 | Planned |
+| 12   | Upgrade `MCPClient` to full MCP stdio/SSE transport (replace direct HTTP calls)              | Phase 7 | ✅ Done (via `mcp_server.py` stdio transport) |
+| 13   | `mcp_server.py` — expose all four pipelines as MCP tools                                     | Phase 7 | ✅ Done |
+| 14   | Register `openresearch` server in `.mcp.json` for Claude Code / Claude Desktop               | Phase 7 | ✅ Done |
 
 ---
 
@@ -986,6 +986,8 @@ openresearch/
 │   ├── SETUP.md                     Step-by-step setup guide
 │   ├── design.md                    This document
 │   └── conversation.md              Original design session transcript
+│
+├── mcp_server.py                    MCP stdio server — 4 tools; lazy pipeline init; logs to stderr
 │
 └── [legacy ML code]                 agents/eda_agent.py, agents/executor_agent.py, etc.
                                      Not imported by new code; can be removed
@@ -1759,28 +1761,41 @@ class ClimateRiskSnapshot(BaseModel):
 
 All Equibles calls are gated behind `mcp.is_available("equibles")` — the pipeline always completes without Equibles running.
 
-### Phase 7 — MCP Server (OpenResearch as MCP tool provider) *(planned)*
+### Phase 7 — MCP Server ✅ Complete
 
-- `mcp_server.py` — `MCPServer("openresearch")` exposing `run_stock_research`, `run_board_session`, `run_interview_prep` as callable MCP tools
-- Register `openresearch` server entry in `.mcp.json`
-- Upgrade `MCPClient` from direct HTTP to full MCP stdio/SSE transport (agent-facing API unchanged)
-- Once registered, Claude Code / Claude Desktop can call research pipelines as native tools — no HTTP client required
+- `mcp_server.py` — stdio MCP server exposing all four pipelines as native tools:
+  - `run_stock_research(ticker, depth?)` → `ResearchBrief` JSON
+  - `run_board_session(mode?, context?, raw_paste?)` → `BoardBriefing` JSON
+  - `run_interview_prep(jd_text, company_name, role_title, profile_text?, depth?)` → `InterviewPrepBrief` JSON
+  - `run_real_estate_research(city, state, address?, depth?, bedrooms?, purchase_price?, ...)` → `RealEstateBrief` JSON
+- Pipelines initialised lazily on first call — process starts instantly
+- All logs routed to stderr; stdout reserved for MCP stdio transport
+- `mcp>=1.0.0` added to `pyproject.toml`
+- `.mcp.json` `openresearch` entry updated with full tool documentation
+- Registered: Claude Code / Claude Desktop can call research pipelines as native tools without HTTP
 
-### Phase 8 — Real Estate Research *(planned)*
+### Phase 8 — Real Estate Research ✅ Complete
 
-**Schemas + pipeline *(planned)***
-- `schemas/realestate.py` — `RealEstatePipelineInput`, `MigrationSignal`, `MigrationSnapshot`, `LaborMarketSnapshot`, `HousingMarketSnapshot`, `CostOfLivingSnapshot`, `DemandFactorsSnapshot`, `DocumentInsight`, `RealEstateBrief`
-- `agents/realestate/document_ingestion.py` — wraps existing `DocumentLoader` + `ScannedPDFOCR`; LLM pass to extract `DocumentInsight` list; no new OCR code
-- `agents/realestate/migration_analyst.py` — IRS SOI bulk file parser; Census ACS API; U-Haul index scraper; FRED population series; Census population estimates; produces city + state `MigrationSnapshot`
-- `agents/realestate/economic_analyst.py` — BLS CES/LAUS/OES/QCEW/JOLTS APIs; BEA Regional Price Parities; state tax rate static table; FRED wage series; produces `LaborMarketSnapshot` + `CostOfLivingSnapshot`
+**Schemas ✅**
+- `schemas/realestate.py` — `RealEstatePipelineInput`, `GeoResolution`, `MigrationSignal`, `MigrationSnapshot`, `LaborMarketSnapshot`, `HousingMarketSnapshot`, `CostOfLivingSnapshot`, `DemandFactorsSnapshot`, `ClimateRiskSnapshot`, `FloodRiskDetail`, `RentalUnderwritingSnapshot`, `RegulatoryRiskSnapshot`, `NeighborhoodSnapshot`, `RentalAnalysis`, `DocumentInsight`, `DocumentFactsBundle`, `RealEstateBrief` — plus 9 document-type extract schemas (appraisal, inspection, HOA, tax record, lease, flood cert, listing, CMA, zoning)
+
+**Pipeline + agents ✅**
+- `agents/realestate/_geo.py` — Census Geocoder → FIPS + CBSA + lat/lon; lookup-table fallback
+- `agents/realestate/document_ingestion.py` — wraps `DocumentLoader` + `ScannedPDFOCR`; LLM classifies + extracts type-specific facts; produces `DocumentInsight` list + `DocumentFactsBundle`
+- `agents/realestate/migration_analyst.py` — IRS SOI bulk CSV; Census ACS API; U-Haul index; FRED population series; produces city + state `MigrationSnapshot`
+- `agents/realestate/economic_analyst.py` — BLS CES/LAUS/OES/QCEW/JOLTS; BEA RPP; static state tax table; FRED wage series; produces `LaborMarketSnapshot` + `CostOfLivingSnapshot`
 - `agents/realestate/housing_analyst.py` — Zillow Research CSV cache; Redfin Data Center CSV cache; Census Building Permits API; HUD API; FBI NIBRS API; EPA AQS API; FEMA NFHL; Walk Score API; produces `HousingMarketSnapshot` + `DemandFactorsSnapshot`
-- `agents/realestate/synthesizer.py` — LLM: Pareto framing of top 3–5 push/pull factors; explicit city-vs-state divergence commentary; data gap flagging; produces `RealEstateBrief`
-- `pipelines/realestate_pipeline.py` — `RealEstatePipeline.from_config()`; 5-node chain; `depth` gates; document ingestion optional
+- `agents/realestate/rental_underwriter.py` — no LLM; arithmetic model: rent estimates (RentCast / HUD FMR / ZORI), expenses (tax, insurance, NFIP, vacancy, mgmt, maintenance, CapEx), NOI, cap rate, CoC return, DSCR, break-even occupancy
+- `agents/realestate/regulatory_analyst.py` — static 50-state table: eviction timeline, rent control exposure, STR rules, insurance market stress; `RegulatoryRiskSnapshot`
+- `agents/realestate/neighborhood_analyst.py` — ACS tract demographics, Walk Score, HUD USPS vacancy, GreatSchools; `NeighborhoodSnapshot`
+- `agents/realestate/rental_synthesizer.py` — LLM: synthesises underwriting + regulatory + neighborhood into `RentalAnalysis` with feasibility verdict, quantified pros/cons, and due-diligence checklist
+- `agents/realestate/synthesizer.py` — LLM: Pareto framing of top 3–5 push/pull factors; city-vs-state divergence commentary; data gap flagging; produces `RealEstateBrief`
+- `pipelines/realestate_pipeline.py` — `RealEstatePipeline.from_config()`; 7-node chain; `depth` gates; rental nodes triggered automatically when property details provided
 
-**API endpoints *(planned)***
-- `POST /api/real-estate-research` — synchronous; loads `documents_dir` when provided; exports to Tolaria if `export_to_tolaria=true`
+**API endpoint ✅**
+- `POST /api/real-estate-research` — synchronous; loads `documents_dir` when provided; exports to Tolaria if `export_to_tolaria=true`; registered in `server.py` with `_realestate_pipeline` singleton
 
-**Config additions *(planned)***
+**Config additions ✅**
 ```yaml
 real_estate_research:
   data_sources:
@@ -1807,11 +1822,11 @@ real_estate_research:
 | 3 | **Stock research depth**: Should "Quick" mode skip EDGAR?                             | **Resolved** — `depth="quick"` skips Alpha Vantage, Polygon.io, and SEC EDGAR. Only yfinance + NewsAPI run.                                                                                                  |
 | 4 | **Decision Advisory debate**: Sequential or parallel?                                 | **Resolved as parallel** — all board members respond to the proposal simultaneously from their lens. CoS then synthesizes the debate. Sequential mode available via `parallel_execution: false`.             |
 | 5 | **FastAPI server access model**: Always-on or on-demand?                              | **Open** — currently launched manually with `python server.py`. Always-on service setup (Windows nssm / macOS launchd) documented in SETUP.md but not automated.                                             |
-| 6 | **MCP server transport**: stdio vs SSE?                                               | **Open** — `stdio` is simpler for local Claude Code use; SSE supports remote clients. Default to `stdio` for Phase 7; SSE can be added later if the Chrome extension needs to call MCP directly.             |
+| 6 | **MCP server transport**: stdio vs SSE?                                               | **Resolved** — `stdio` implemented in `mcp_server.py`. The `openresearch` entry in `.mcp.json` uses `"command": "python", "args": ["mcp_server.py"]`. SSE can be added later for Chrome extension use; the `Server` object is transport-agnostic. |
 | 7 | **Tailored resume output**: Should the interview pipeline write a JD-targeted resume? | **Resolved** — `ResumeWriterAgent` (Node 5) added to interview pipeline. Takes `MasterProfile` + `FitVerdict` + JD, rewrites as targeted resume. Runs on `depth="full"`. Includes `tailoring_notes` transparency log. Output: `TailoredResume` in `InterviewPrepBrief`. |
 | 8 | **Company research quality**: LLM knowledge vs live web?                              | **Resolved** — `MCPClient` added (`agents/mcp_client.py`). `CompanyResearcherAgent` runs 3 Brave Search queries before LLM call when `mcp.brave_search_key` is set. Falls back to LLM-only when key absent. |
 | 9 | **Application pattern analysis**: Who reads `applications.json`?                      | **Resolved** — `ApplicationStore.insights()` added. `GET /api/tracker/insights` surfaces: win rate, stage funnel, most common failure stage, fit score vs outcome correlation, and 5 plain-English action items. No LLM calls. |
-| 10 | **Real estate — city boundary definition**: How do we map a city name to county FIPS for IRS/Census lookups? | **Open** — use Census Geocoder API (free) to resolve city → FIPS county; fallback to user-supplied ZIP for metro delineation. Multiple counties per metro = sum over CBSAs. |
-| 11 | **Real estate — Zillow/Redfin CSV freshness**: Data files are updated monthly; should the pipeline auto-download on first run? | **Open** — default to local cache with a `cache_max_age_days: 30` config value; if cache is stale or absent, fetch latest CSV directly from Zillow Research / Redfin public URLs. |
-| 12 | **Real estate — U-Haul ranking source**: Annual index is published as a press release / web page, not a structured API. | **Open** — lightweight HTML scraper on the U-Haul Articles page; static fallback table baked into agent for offline/quick mode. |
-| 13 | **Real estate — IRS SOI migration files**: Bulk ZIP files are ~50 MB per year; should the pipeline cache them locally? | **Open** — yes; `irs_cache_dir` config stores extracted CSVs; pipeline checks for presence before downloading; county-level extract only (not full file). |
+| 10 | **Real estate — city boundary definition**: How do we map a city name to county FIPS for IRS/Census lookups? | **Resolved** — `agents/realestate/_geo.py` calls Census Geocoder API → FIPS + CBSA code. Falls back to a static lookup table keyed by city+state. Multiple counties per metro are summed over CBSA. |
+| 11 | **Real estate — Zillow/Redfin CSV freshness**: Data files are updated monthly; should the pipeline auto-download on first run? | **Resolved** — `cache_max_age_days: 30` in config; `HousingAnalystAgent` checks file mtime before downloading; fetches latest CSV from Zillow Research / Redfin public URLs when stale or absent. |
+| 12 | **Real estate — U-Haul ranking source**: Annual index is published as a press release / web page, not a structured API. | **Resolved** — `MigrationAnalystAgent` scrapes the U-Haul Growth Cities page (lightweight HTML); static top-50 fallback table baked in for offline / quick mode. |
+| 13 | **Real estate — IRS SOI migration files**: Bulk ZIP files are ~50 MB per year; should the pipeline cache them locally? | **Resolved** — `irs_cache_dir` config value (default `data/realestate/irs/`); pipeline checks for extracted CSVs before downloading; only county-level migration extract retained (not full file). |

@@ -1,3 +1,45 @@
+1. Stock agent pipeline (agents/stock/) — a 5-node sequential pipeline, plain Python classes (not LangChain agents), each returning either raw dicts or Pydantic models from schemas/stock.py:
+
+data_fetcher.py (DataFetcherAgent.fetch(ticker, depth)) — pulls Yahoo Finance (yfinance, free), Alpha Vantage (income statement/balance sheet, key required), Polygon.io (earnings calendar, key required), and optionally Equibles (a self-hosted MCP Docker service) for 13F institutional holdings, FINRA short interest, SEC fails-to-deliver, insider trades, congressional trading, and technicals. Equibles calls are gated by mcp.is_available("equibles") and fail silently. Returns a raw dict.
+news_aggregator.py (NewsAggregatorAgent.fetch) — NewsAPI headlines (key required), SEC EDGAR filing index via CIK lookup (free), plus Equibles SEC full-text search excerpts and Form 3/4 insider transactions. Returns a raw dict.
+fundamentals_analyst.py (FundamentalsAnalystAgent.analyze) — LLM call (via agents/api_utils.LLMClient) with a "buy-side analyst" persona; parses JSON into ValuationSummary pydantic model, with a rule-based fallback if parsing fails.
+sentiment_analyst.py — LLM call producing SentimentSummary (tone, catalysts, risks, headlines).
+research_synthesizer.py — final LLM synthesis into ResearchBrief (verdict, price target, bull/bear case, risks, catalysts, sources), embedding the other pydantic models plus typed Equibles sub-schemas (InstitutionalSnapshot, MarketStructureData, TechnicalIndicators).
+
+All wired together by pipelines/stock_pipeline.py (StockResearchPipeline.from_config()).
+
+2. Orchestration — Custom, not LangGraph-based despite langgraph being a listed dependency. Per docs/design.md, LangGraph was only used as a "pattern basis" and was replaced with plain async Python pipelines per domain (stock/board/interview/realestate), each independently invokable — no shared graph engine. orchestrator/graph.py is legacy code from an older "AutoResearch" ML-experiment pipeline (Kaggle-based), unrelated to the stock/board/interview/realestate verticals and reportedly not imported by current pipelines.
+
+3. UI — No UI currently exists in the repo. server.py (FastAPI, ~1100 lines) exposes REST endpoints (/api/stock-research, /api/board-session, /api/interview-prep, /api/real-estate-research, profile/tracker/learn endpoints) and mcp_server.py exposes the same pipelines as MCP tools over stdio. The design doc describes a planned but unbuilt Chrome Extension (Phase 5, status "pending") with StockResearch.tsx, ExecutiveBoard.tsx, InterviewPrep.tsx, RealEstate.tsx components. docs/Finance-AI/finance (a Next.js/Supabase app) and docs/Finance-AI/AI-Trader are untracked, separately-cloned reference repos for research purposes only — not part of openresearch.
+
+4. Dependencies (pyproject.toml) — anthropic, openai, langgraph, fastapi/uvicorn, pydantic, yfinance, httpx, mcp. No dedicated finance SDKs beyond yfinance; Alpha Vantage/Polygon/NewsAPI/Equibles are all called via raw httpx.
+
+5. Product scope — Multi-vertical "AI Research & Executive Intelligence Platform": Stock Research, Executive Board (6 AI board members), Interview Prep, Real Estate — all sharing infra (LLMClient, FastAPI server, pydantic schemas) but domain-isolated agents/pipelines. A stock UI should be built as one panel/route among several, sharing the same FastAPI backend and auth/config, not a standalone app.
+
+Here's what I found comparing the existing code against your requirements doc.
+
+What agents/stock/ already covers
+It's a 5-stage async pipeline (not LangChain/LangGraph despite that being a listed dependency — plain Python, per docs/design.md's note that LangGraph was dropped in favor of custom pipelines):
+
+__Requirement Status__
+Fundamentals breakdown	        ✅ fundamentals_analyst.py — LLM-driven, pydantic ValuationSummary
+Insider/Congress trade alerts	✅ via Equibles (a self-hosted MCP/Docker service) for Form 3/4 + congressional trading; falls back silently if Equibles isn't running
+Institutional holdings	        ✅ 13F snapshots via Equibles
+News + sentiment	            ✅ NewsAPI + SEC EDGAR filings + LLM sentiment
+Final synthesis	                ✅ research_synthesizer.py → ResearchBrief (verdict, price target, bull/bear, risks, catalysts, sources)
+Stock comparison (2-ticker)	    ❌ not present
+Watchlist (20 stocks)	        ❌ not present
+Earnings call summaries	        ❌ not present (news/filings only, not transcripts)
+5-year + prior-year trend view	❌ not present
+Personal memory/context system	❌ not present
+UI	                            ❌ none exists anywhere — only a FastAPI server (server.py) + MCP server. docs/design.md describes a planned, unbuilt Chrome extension covering Stock, Board, Interview, and RealEstate as separate panels.
+
+So the repo is materially further along than the Finance-AI notes assumed (a working LLM synthesis pipeline with real data sources already wired), and the actual gaps are: watchlist, comparison, earnings-call summarization, trend charts, personal memory, and — the big one — no frontend at all yet.
+
+A few things only you can decide before I scope this:
+
+----------------------
+
 Initial Personal Research to collect Finance App feasability
 My machine is a windows machine. Use Docker or venv for Python as appropriate. I have LM Studio with RTX 4070 and 10 GB VRAM. So we cannot go crazy with a big LLM model.
 

@@ -2,19 +2,40 @@
 
 ## Overview
 
-Build a desktop financial research assistant using a Tauri frontend with a FastAPI Python backend. The app should be an LLM-powered stock analyzer that aggregates recent market data, company financials, and news, then produces structured investment intelligence that is easy to consume for non-experts.
+Build a desktop research assistant using a **Tauri frontend as the shared UI for the whole OpenResearch platform** (Stock Research, Executive Board, Interview Prep, Real Estate), talking to the existing local **FastAPI server** (`server.py`, `localhost:7842`). This replaces the Chrome Extension that `docs/design.md` describes as planned-but-unbuilt (Phase 5) — Tauri becomes the one desktop shell for all four verticals rather than a stock-only app.
+
+Within that shell, the Stock Research panel should feel like an LLM-powered stock analyzer that aggregates recent market data, company financials, and news, then produces structured investment intelligence that is easy to consume for non-experts.
 
 The goal is to provide a reliable analysis starting point, not a final trading recommendation. The product should help users avoid endlessly searching YouTube and blogs by delivering focused, sourced, and transparent financial insights.
 
+## Existing Foundation (already built — do not rebuild)
+
+`agents/stock/` already implements a 5-node async pipeline (`pipelines/stock_pipeline.py`, exposed at `POST /api/stock-research` and via `mcp_server.py`'s `run_stock_research` tool):
+
+1. `data_fetcher.py` — Yahoo Finance (free), Alpha Vantage (income statement/balance sheet), Polygon.io (earnings calendar), and **Equibles** (self-hosted MCP/Docker service, `depth="full"` only) for 13F institutional holdings, FINRA short interest, SEC fails-to-deliver, insider Form 3/4 transactions, congressional trading, and technical indicators (RSI/MACD/Bollinger/SMAs).
+2. `news_aggregator.py` — NewsAPI headlines, SEC EDGAR filing index, plus Equibles SEC full-text search excerpts.
+3. `fundamentals_analyst.py` — LLM-generated `ValuationSummary` (fair value range, margins, growth, moat assessment).
+4. `sentiment_analyst.py` — LLM-generated `SentimentSummary` (tone, catalysts, risks, headlines).
+5. `research_synthesizer.py` — final LLM synthesis into `ResearchBrief` (verdict, price target, bull/bear case, risks, catalysts, sources), with Equibles data attached when available.
+
+**This already satisfies requirements #1 (fundamentals), #2 (insider/Congress trades — via Equibles), and most of #6 (institutional ownership — via Equibles 13F, though not ETF-specific).** The real gaps are the ones listed below under Core Features #3–5, #7, and the Personal Memory system — plus the fact that **no UI exists yet at all**.
+
+### Equibles dependency (currently not set up)
+
+Insider trades, Congress trades, 13F institutional holdings, and technical indicators all depend on Equibles, a self-hosted Docker service (`docker compose up -d`, MCP at `localhost:8081`). It is **not yet running** in this environment. Until it is:
+- Those fields return `None` in `ResearchBrief` — the pipeline degrades gracefully rather than failing.
+- Requirement #2 (insider/Congress alerts) and the ETF/institutional part of #6 cannot be demoed end-to-end.
+- **Action item:** set up Equibles before building UI panels that depend on this data, or scope a fallback data source (e.g. EdgarTools for Form 4/13F — see Source Verification below) if self-hosting Equibles isn't viable long-term.
+
 ## Primary User Needs
 
-1. Highly detailed breakdowns of a company’s fundamentals.
-2. Insider and Congress trade alerts.
-3. Side-by-side comparisons of any two stocks, showing where each one excels.
-4. A watchlist of up to 20 stocks.
-5. Summarized earnings calls.
-6. Insights into the ETFs and institutions that hold any stock.
-7. Five-year trend analysis plus a previous-year summary.
+1. Highly detailed breakdowns of a company's fundamentals. — **✅ built** (`fundamentals_analyst.py`)
+2. Insider and Congress trade alerts. — **✅ built, blocked on Equibles setup**
+3. Side-by-side comparisons of any two stocks, showing where each one excels. — **❌ not built**
+4. A watchlist of up to 20 stocks. — **❌ not built**
+5. Summarized earnings calls. — **❌ not built** (current pipeline summarizes filings/news, not earnings-call transcripts specifically)
+6. Insights into the ETFs and institutions that hold any stock. — **⚠️ partial**: institutional 13F via Equibles; no ETF-specific breakout
+7. Five-year trend analysis plus a previous-year summary. — **❌ not built**
 
 ## Product Vision
 
@@ -26,11 +47,11 @@ The system should return a comprehensive analysis in under a minute using recent
 
 ## Target Architecture
 
-- Desktop frontend: **Tauri**
-- Backend API: **FastAPI**
+- Desktop frontend: **Tauri** — one shell for all four OpenResearch verticals (Stock, Executive Board, Interview Prep, Real Estate), not a stock-only app. Panels map to existing endpoints: `POST /api/stock-research`, `POST /api/board-session` + polling, `POST /api/interview-prep`, `POST /api/real-estate-research`.
+- Backend API: **FastAPI** — already implemented (`server.py`, `localhost:7842`). No new backend framework needed; new work is new endpoints/fields on the existing server plus the pipeline gaps below.
 - Core logic: Python
-- AI layer: LLMs with retrieval augmentation and structured prompt design
-- Data sources: real-time price feeds, fundamentals APIs, news feeds, filings, insider data, ownership data, and optionally sentiment sources
+- AI layer: LLMs with retrieval augmentation and structured prompt design — already implemented via `LLMClient.from_config()` (Anthropic primary, local LM Studio/Ollama fallback via `openai_compatible` provider)
+- Data sources: real-time price feeds, fundamentals APIs, news feeds, filings, insider data, ownership data, and optionally sentiment sources — see Existing Foundation above for what's wired up today
 
 ## Deployment Constraints
 
