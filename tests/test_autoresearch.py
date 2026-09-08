@@ -17,10 +17,10 @@ from pathlib import Path
 
 import pytest
 
-# Make sure autoresearch is importable
+# Make sure the repo root (where agents/, schemas/, orchestrator/, tools/ live) is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     TaskType,
     EvalMetric,
@@ -39,8 +39,8 @@ from autoresearch.schemas import (
     MethodScore,
     RiskFlag,
 )
-from autoresearch.orchestrator.state import GlobalState, Stage, DataSource, TokenUsage
-from autoresearch.agents.api_utils import (
+from orchestrator.state import GlobalState, Stage, DataSource, TokenUsage
+from agents.api_utils import (
     list_provider_models,
     _Backend,
     _context_limit_for,
@@ -272,36 +272,36 @@ class TestEvaluatorLogic:
     """Test the scoring logic without calling Claude."""
 
     def test_normalize_scores_equal(self):
-        from autoresearch.agents.evaluator_agent import normalize_scores
+        from agents.evaluator_agent import normalize_scores
         result = normalize_scores([0.5, 0.5, 0.5])
         assert all(v == 1.0 for v in result)
 
     def test_normalize_scores_higher_better(self):
-        from autoresearch.agents.evaluator_agent import normalize_scores
+        from agents.evaluator_agent import normalize_scores
         result = normalize_scores([0.6, 0.8, 1.0], higher_is_better=True)
         assert result[2] > result[1] > result[0]
         assert result[2] == pytest.approx(1.0)
         assert result[0] == pytest.approx(0.0)
 
     def test_normalize_scores_lower_better(self):
-        from autoresearch.agents.evaluator_agent import normalize_scores
+        from agents.evaluator_agent import normalize_scores
         result = normalize_scores([10, 20, 30], higher_is_better=False)
         assert result[0] > result[1] > result[2]  # Lower time → higher score
 
     def test_interpretability_scores_ordered(self):
-        from autoresearch.agents.evaluator_agent import get_interpretability_score
+        from agents.evaluator_agent import get_interpretability_score
         linear_score  = get_interpretability_score("Linear")
         gb_score      = get_interpretability_score("Gradient Boosting")
         nn_score      = get_interpretability_score("Transformer")
         assert linear_score > gb_score > nn_score
 
     def test_interpretability_unknown_family(self):
-        from autoresearch.agents.evaluator_agent import get_interpretability_score
+        from agents.evaluator_agent import get_interpretability_score
         score = get_interpretability_score("SomeUnknownAlgorithm")
         assert score == 0.5  # Neutral default
 
     def test_risk_flag_overfitting(self):
-        from autoresearch.agents.evaluator_agent import EvaluatorAgent
+        from agents.evaluator_agent import EvaluatorAgent
         # Create a result with extreme overfitting
         overfit_result = ExecutionResult(
             method_id="xgboost",
@@ -320,7 +320,7 @@ class TestEvaluatorLogic:
         assert len(critical_flags) == 1
 
     def test_risk_flag_suspicious_score(self):
-        from autoresearch.agents.evaluator_agent import EvaluatorAgent
+        from agents.evaluator_agent import EvaluatorAgent
         perfect_result = ExecutionResult(
             method_id="model",
             method_name="Suspicious Model",
@@ -336,7 +336,7 @@ class TestEvaluatorLogic:
         assert suspicious[0].severity == "critical"
 
     def test_weight_validation(self):
-        from autoresearch.agents.evaluator_agent import EvaluatorAgent
+        from agents.evaluator_agent import EvaluatorAgent
         # Weights that don't sum to 1.0 should be auto-normalized
         agent = object.__new__(EvaluatorAgent)
         agent.weights = {"performance": 2.0, "speed": 2.0, "interpretability": 2.0, "robustness": 2.0}
@@ -483,22 +483,22 @@ class TestGlobalState:
 
 class TestReportGenerator:
     def test_data_report_creates_file(self, tmp_path, sample_data_health, heart_disease_spec):
-        from autoresearch.tools.report_generator import generate_data_report
+        from tools.report_generator import generate_data_report
         output = generate_data_report(sample_data_health, heart_disease_spec, tmp_path)
         assert output.exists()
-        html = output.read_text()
+        html = output.read_text(encoding="utf-8")
         assert "Data Intelligence Report" in html
         assert "303" in html  # Row count
         assert "82" in html   # Health score
 
     def test_data_report_contains_flags(self, tmp_path, sample_data_health, heart_disease_spec):
-        from autoresearch.tools.report_generator import generate_data_report
+        from tools.report_generator import generate_data_report
         output = generate_data_report(sample_data_health, heart_disease_spec, tmp_path)
-        html = output.read_text()
+        html = output.read_text(encoding="utf-8")
         assert "flag-warning" in html or "flag-critical" in html
 
     def test_comparison_report_creates_file(self, tmp_path, heart_disease_spec, xgboost_result, logreg_result):
-        from autoresearch.tools.report_generator import generate_comparison_report
+        from tools.report_generator import generate_comparison_report
 
         evaluation = EvaluationReport(
             method_scores=[
@@ -535,14 +535,14 @@ class TestReportGenerator:
             [xgboost_result, logreg_result], evaluation, heart_disease_spec, tmp_path
         )
         assert output.exists()
-        html = output.read_text()
+        html = output.read_text(encoding="utf-8")
         assert "XGBoost" in html
         assert "winner-row" in html
         assert "0.847" in html
 
     def test_comparison_report_shows_failed(self, tmp_path, heart_disease_spec,
                                              xgboost_result, failed_result):
-        from autoresearch.tools.report_generator import generate_comparison_report
+        from tools.report_generator import generate_comparison_report
 
         evaluation = EvaluationReport(
             method_scores=[
@@ -562,7 +562,7 @@ class TestReportGenerator:
         output = generate_comparison_report(
             [xgboost_result, failed_result], evaluation, heart_disease_spec, tmp_path
         )
-        html = output.read_text()
+        html = output.read_text(encoding="utf-8")
         assert "TabNet" in html
         assert "Failed" in html or "GPU memory" in html
 
@@ -571,8 +571,8 @@ class TestReportGenerator:
 
 class TestDataSourceResolver:
     def test_kaggle_dataset_slug(self):
-        from autoresearch.tools.data_sources import DataSourceResolver
-        from autoresearch.orchestrator.state import DataSource
+        from tools.data_sources import DataSourceResolver
+        from orchestrator.state import DataSource
 
         resolver = DataSourceResolver(kaggle_client=None)
         ds = DataSource(type="kaggle", identifier="username/heart-disease", description="test")
@@ -581,8 +581,8 @@ class TestDataSourceResolver:
         assert len(result.competition_sources) == 0
 
     def test_kaggle_competition_slug(self):
-        from autoresearch.tools.data_sources import DataSourceResolver
-        from autoresearch.orchestrator.state import DataSource
+        from tools.data_sources import DataSourceResolver
+        from orchestrator.state import DataSource
 
         resolver = DataSourceResolver(kaggle_client=None)
         ds = DataSource(type="kaggle", identifier="titanic", description="Titanic competition")
@@ -591,8 +591,8 @@ class TestDataSourceResolver:
         assert "titanic" in result.competition_sources
 
     def test_huggingface_generates_setup_cell(self):
-        from autoresearch.tools.data_sources import DataSourceResolver
-        from autoresearch.orchestrator.state import DataSource
+        from tools.data_sources import DataSourceResolver
+        from orchestrator.state import DataSource
 
         resolver = DataSourceResolver(kaggle_client=None)
         ds = DataSource(type="huggingface", identifier="imdb", description="IMDB sentiment")
@@ -602,8 +602,8 @@ class TestDataSourceResolver:
         assert "imdb" in result.kernel_setup_cells[0]
 
     def test_gdrive_generates_setup_cell(self):
-        from autoresearch.tools.data_sources import DataSourceResolver
-        from autoresearch.orchestrator.state import DataSource
+        from tools.data_sources import DataSourceResolver
+        from orchestrator.state import DataSource
 
         resolver = DataSourceResolver(kaggle_client=None)
         ds = DataSource(
@@ -617,8 +617,8 @@ class TestDataSourceResolver:
         assert "gdown" in result.kernel_setup_cells[0]
 
     def test_unknown_source_raises(self):
-        from autoresearch.tools.data_sources import DataSourceResolver
-        from autoresearch.orchestrator.state import DataSource
+        from tools.data_sources import DataSourceResolver
+        from orchestrator.state import DataSource
 
         resolver = DataSourceResolver(kaggle_client=None)
         ds = DataSource(type="dropbox", identifier="some/file", description="test")

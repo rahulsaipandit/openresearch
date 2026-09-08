@@ -33,3 +33,14 @@ Thumbs.db
 # Tooling state
 .zencoder/
 .zenflow/
+
+# Desktop app (Tauri + Vite + Rust)
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+
+# LiteParse local tool install
+tools/liteparse/node_modules/
+
+# Local runtime data (profile/watchlist/applications/skills stores)
+data/

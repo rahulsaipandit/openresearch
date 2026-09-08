@@ -28,11 +28,11 @@ from pathlib import Path
 
 import nbformat
 
-from autoresearch.agents.api_utils import LLMClient
+from agents.api_utils import LLMClient
 from jinja2 import Environment, FileSystemLoader
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     MethodSpec,

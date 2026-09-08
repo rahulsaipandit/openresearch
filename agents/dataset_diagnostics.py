@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from autoresearch.schemas import DataHealthReport, DatasetDiagnosticsReport
+from schemas import DataHealthReport, DatasetDiagnosticsReport
 
 
 class DatasetDiagnostics:

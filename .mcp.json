@@ -38,7 +38,17 @@
       "command": "python",
       "args": ["mcp_server.py"],
       "cwd": ".",
-      "comment": "Phase 7 (planned): exposes run_stock_research, run_board_session, run_interview_prep as MCP tools"
+      "comment": [
+        "OpenResearch MCP server — exposes all four research pipelines as native tools.",
+        "Prerequisites: pip install mcp  (adds the mcp package).",
+        "Tools available once registered:",
+        "  run_stock_research(ticker, depth?)         → ResearchBrief JSON",
+        "  run_board_session(mode?, context?, raw_paste?) → BoardBriefing JSON",
+        "  run_interview_prep(jd_text, company_name, role_title, profile_text?, depth?) → InterviewPrepBrief JSON",
+        "  run_real_estate_research(city, state, address?, depth?, bedrooms?, purchase_price?, ...) → RealEstateBrief JSON",
+        "Pipelines are initialised lazily on first call — startup is instant.",
+        "All logs go to stderr; stdout is reserved for the MCP stdio transport."
+      ]
     }
   }
 }

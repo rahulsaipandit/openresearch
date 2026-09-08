@@ -1,0 +1,9 @@
+{
+  "name": "openresearch-liteparse-tool",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local install of @llamaindex/liteparse for the document-insights backend integration",
+  "dependencies": {
+    "@llamaindex/liteparse": "^2.10.1"
+  }
+}

@@ -101,6 +101,50 @@ class TechnicalIndicators(BaseModel):
     trend_signal: Optional[str] = None        # brief technical summary
 
 
+class CandlestickPattern(BaseModel):
+    """A single detected candlestick pattern, computed deterministically from OHLC bars."""
+    pattern: str                              # e.g. "bullish_engulfing", "hammer", "doji"
+    date: str                                 # ISO date of the bar the pattern completed on
+    direction: Literal["bullish", "bearish", "neutral"]
+
+
+class SignalTrigger(BaseModel):
+    """A single buy/sell trigger produced by the rule-based signal agent."""
+    date: str
+    action: Literal["buy", "sell"]
+    reason: str                               # e.g. "RSI oversold (24.3) + bullish engulfing"
+
+
+class SignalSet(BaseModel):
+    """
+    Deterministic technical signals — candlestick patterns + indicator-based
+    buy/sell triggers. No LLM involved in computing any of this; see
+    agents/stock/signal_agent.py for why.
+    """
+    patterns: list[CandlestickPattern] = Field(default_factory=list)
+    triggers: list[SignalTrigger] = Field(default_factory=list)
+    current_signal: Literal["buy", "sell", "hold"] = "hold"
+    summary: str = ""                         # deterministic plain-English rollup
+
+
+class BacktestResult(BaseModel):
+    """
+    Backtest of the SignalSet's buy/sell triggers against historical prices,
+    with a sealed out-of-sample window so the reported edge isn't just
+    curve-fit to the full lookback period. See agents/stock/backtest_engine.py.
+    """
+    strategy_return_pct: Optional[float] = None
+    strategy_sharpe: Optional[float] = None
+    strategy_max_drawdown_pct: Optional[float] = None
+    benchmark_ticker: str = "^GSPC"
+    benchmark_return_pct: Optional[float] = None
+    benchmark_sharpe: Optional[float] = None
+    out_of_sample_return_pct: Optional[float] = None
+    out_of_sample_window: str = ""            # e.g. "2025-10-01 to 2026-08-14 (last 20%)"
+    num_trades: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
 class ResearchBrief(BaseModel):
     ticker: str
     company_name: str
@@ -120,6 +164,8 @@ class ResearchBrief(BaseModel):
     institutional: Optional[InstitutionalSnapshot] = None
     market_structure: Optional[MarketStructureData] = None
     technicals: Optional[TechnicalIndicators] = None
+    signals: Optional[SignalSet] = None
+    backtest: Optional[BacktestResult] = None
     sources: list[str] = Field(default_factory=list)
 
 
@@ -127,3 +173,35 @@ class StockPipelineInput(BaseModel):
     ticker: str
     depth: Literal["quick", "full"] = "full"
     provider: Optional[str] = None            # override LLM provider for this run
+
+
+class TrendPoint(BaseModel):
+    """One data point in a price or annual-financials trend series."""
+    date: str                                 # ISO date
+    close: Optional[float] = None             # price series
+    revenue: Optional[float] = None           # annual financials series
+    net_income: Optional[float] = None        # annual financials series
+
+
+class VolatilityMetrics(BaseModel):
+    """
+    Daily-return volatility estimates — how much the price bounces around,
+    computed deterministically (no LLM call) from ~1y of daily closes.
+    """
+    ewma_annualized_pct: Optional[float] = None            # RiskMetrics EWMA (lambda=0.94), recent-weighted
+    garch_forecast_annualized_pct: Optional[float] = None  # GARCH(1,1) one-day-ahead forecast
+    garch_long_run_annualized_pct: Optional[float] = None  # GARCH(1,1) unconditional long-run average
+    interpretation: str = ""
+
+
+class TrendData(BaseModel):
+    """
+    Five-year trend view: monthly price history + annual revenue/net income,
+    plus a deterministically-computed (not LLM-generated) previous-year summary
+    so change percentages can't be hallucinated.
+    """
+    ticker: str
+    price_history: list[TrendPoint] = Field(default_factory=list)      # ~5y, monthly close
+    annual_financials: list[TrendPoint] = Field(default_factory=list)  # revenue/net income per fiscal year
+    previous_year_summary: str = ""
+    volatility: Optional[VolatilityMetrics] = None

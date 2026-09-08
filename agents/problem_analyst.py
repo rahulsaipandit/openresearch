@@ -19,9 +19,9 @@ import logging
 import re
 from typing import Optional
 
-from autoresearch.agents.api_utils import LLMClient
+from agents.api_utils import LLMClient
 
-from autoresearch.schemas import ProblemSpec, TaskType, EvalMetric, Constraint
+from schemas import ProblemSpec, TaskType, EvalMetric, Constraint
 
 logger = logging.getLogger(__name__)
 

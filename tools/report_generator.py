@@ -16,7 +16,7 @@ Numbers are always accompanied by plain English interpretation.
 from pathlib import Path
 from typing import Optional
 
-from autoresearch.schemas import (
+from schemas import (
     DataHealthReport,
     EvaluationReport,
     ExecutionResult,
@@ -261,8 +261,8 @@ def generate_comparison_report(
         <tr class="{row_class}">
             <td><strong>{r.method_name}{crown}</strong></td>
             <td><strong>{r.primary_metric_value:.4f}</strong></td>
-            <td>{r.train_metric:.4f if r.train_metric else "—"}</td>
-            <td>{r.val_metric:.4f if r.val_metric else "—"}</td>
+            <td>{f"{r.train_metric:.4f}" if r.train_metric else "—"}</td>
+            <td>{f"{r.val_metric:.4f}" if r.val_metric else "—"}</td>
             <td>{gap}</td>
             <td>{f"{r.runtime_minutes:.1f} min" if r.runtime_minutes else "—"}</td>
             <td>{f"{s.total_score:.3f}" if s else "—"}</td>

@@ -20,26 +20,26 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from autoresearch.orchestrator.state import GlobalState, Stage
-from autoresearch.schemas import (
+from orchestrator.state import GlobalState, Stage
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     MethodsCatalog,
     ExecutionResult,
     EvaluationReport,
 )
-from autoresearch.agents.api_utils import LLMClient, resolve_models
-from autoresearch.agents.problem_analyst import ProblemAnalystAgent
-from autoresearch.agents.eda_agent import EDAAgent
-from autoresearch.agents.data_prep_agent import DataPrepAgent
-from autoresearch.agents.method_formulator import MethodFormulatorAgent
-from autoresearch.agents.dataset_diagnostics import DatasetDiagnostics
-from autoresearch.memory.data_prep_memory import DataPrepMemory
-from autoresearch.agents.codegen_agent import CodeGenAgent
-from autoresearch.agents.executor_agent import ExecutionAgent
-from autoresearch.agents.evaluator_agent import EvaluatorAgent
-from autoresearch.agents.paper_writer import PaperWriterAgent
-from autoresearch.tools.kaggle_client import KaggleClient
+from agents.api_utils import LLMClient, resolve_models
+from agents.problem_analyst import ProblemAnalystAgent
+from agents.eda_agent import EDAAgent
+from agents.data_prep_agent import DataPrepAgent
+from agents.method_formulator import MethodFormulatorAgent
+from agents.dataset_diagnostics import DatasetDiagnostics
+from memory.data_prep_memory import DataPrepMemory
+from agents.codegen_agent import CodeGenAgent
+from agents.executor_agent import ExecutionAgent
+from agents.evaluator_agent import EvaluatorAgent
+from agents.paper_writer import PaperWriterAgent
+from tools.kaggle_client import KaggleClient
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ class AutoResearchOrchestrator:
 
         # Generate data report HTML immediately after EDA
         try:
-            from autoresearch.tools.report_generator import generate_data_report
+            from tools.report_generator import generate_data_report
             from pathlib import Path as _Path
             html_path = generate_data_report(report, state.problem_spec, _Path(state.output_dir))
             if self.verbose:
@@ -347,7 +347,7 @@ class AutoResearchOrchestrator:
                             else state.data_health.column_count),
             }
             # Compute signature using ExperimentMemory to keep it consistent.
-            from autoresearch.memory.experiment_memory import ExperimentMemory
+            from memory.experiment_memory import ExperimentMemory
             signature = ExperimentMemory.compute_dataset_signature(
                 dataset_profile, state.problem_spec.task_type.value
             )
@@ -407,7 +407,7 @@ class AutoResearchOrchestrator:
 
         # Generate comparison report HTML immediately after evaluation
         try:
-            from autoresearch.tools.report_generator import generate_comparison_report
+            from tools.report_generator import generate_comparison_report
             from pathlib import Path as _Path
             html_path = generate_comparison_report(
                 state.execution_results, report, state.problem_spec, _Path(state.output_dir)

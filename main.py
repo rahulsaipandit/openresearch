@@ -24,9 +24,9 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
 
-from autoresearch.orchestrator.graph import AutoResearchOrchestrator
-from autoresearch.orchestrator.state import GlobalState, Stage, DataSource
-from autoresearch.agents.api_utils import list_provider_models
+from orchestrator.graph import AutoResearchOrchestrator
+from orchestrator.state import GlobalState, Stage, DataSource
+from agents.api_utils import list_provider_models
 
 app     = typer.Typer(help="AutoResearch — Autonomous ML Research Agent")
 console = Console()

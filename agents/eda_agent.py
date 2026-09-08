@@ -21,9 +21,9 @@ from typing import Optional
 import nbformat
 from nbformat.v4 import new_notebook, new_code_cell, new_markdown_cell
 
-from autoresearch.agents.api_utils import LLMClient
+from agents.api_utils import LLMClient
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     FeatureInsight,
@@ -32,9 +32,9 @@ from autoresearch.schemas import (
     Severity,
     TaskType,
 )
-from autoresearch.tools.kaggle_client import KaggleClient, KernelOutput, KernelExecutionError
-from autoresearch.agents.error_memory import recall, remember, mark_failed, format_for_prompt
-from autoresearch.agents.api_utils import PromptBudget
+from tools.kaggle_client import KaggleClient, KernelOutput, KernelExecutionError
+from agents.error_memory import recall, remember, mark_failed, format_for_prompt
+from agents.api_utils import PromptBudget
 
 logger = logging.getLogger(__name__)
 

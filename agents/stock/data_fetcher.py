@@ -47,6 +47,7 @@ class DataFetcherAgent:
           institutional       — Equibles 13F holders (depth=full + Equibles running)
           market_structure    — Equibles short interest + insider activity (depth=full + Equibles)
           technicals          — Equibles computed technical indicators (Equibles running)
+          signals             — SignalAgent candlestick patterns + buy/sell triggers (depth=full)
 
         Missing sections are empty dicts / None — callers must handle gracefully.
         """
@@ -59,6 +60,7 @@ class DataFetcherAgent:
             "institutional":    None,   # populated by Equibles when available
             "market_structure": None,   # populated by Equibles when available
             "technicals":       None,   # populated by Equibles when available
+            "signals":          None,   # populated by SignalAgent when depth="full"
         }
 
         result["price_data"] = self._fetch_yahoo(ticker)
@@ -74,6 +76,14 @@ class DataFetcherAgent:
                 result["institutional"]    = self._fetch_equibles_institutional(ticker)
                 result["market_structure"] = self._fetch_equibles_market_structure(ticker)
                 result["technicals"]       = self._fetch_equibles_technicals(ticker)
+
+            # Deterministic candlestick patterns + signals — no LLM, no Equibles
+            # dependency (see agents/stock/signal_agent.py for the source reference)
+            from agents.stock.signal_agent import SignalAgent
+            try:
+                result["signals"] = SignalAgent().generate(ticker)
+            except Exception as e:
+                logger.warning(f"SignalAgent failed for {ticker}: {e}")
 
         return result
 

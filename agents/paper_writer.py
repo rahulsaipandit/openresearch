@@ -32,9 +32,9 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from autoresearch.agents.api_utils import LLMClient
+from agents.api_utils import LLMClient
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     MethodsCatalog,

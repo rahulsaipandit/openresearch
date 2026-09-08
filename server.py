@@ -5,32 +5,73 @@ Runs at localhost:7842 (configurable in config.yaml).
 The Chrome extension calls this server directly.
 
 Endpoints:
-  POST /api/stock-research      Run stock research pipeline
+  POST /api/stock-research      Run stock research pipeline (ticker required)
+  POST /api/query               Natural-language front door — extracts ticker(s)/intent, dispatches
+  POST /api/stock-compare        Side-by-side comparison of two tickers
+  GET  /api/stock-trend/{ticker} Five-year trend + previous-year summary
+  GET  /api/watchlist           List watchlist (up to 20 tickers)
+  POST /api/watchlist           Add a ticker to the watchlist
+  DELETE /api/watchlist/{ticker} Remove a ticker from the watchlist
+  GET  /api/portfolio           List portfolio holdings
+  POST /api/portfolio           Add/update a holding (ticker, shares, cost basis)
+  DELETE /api/portfolio/{ticker} Remove a holding
+  POST /api/portfolio-optimize  Single-period rebalance optimization over current holdings
   POST /api/board-session       Run executive board pipeline
   POST /api/board-health        Test integration connections
   GET  /api/board-status/{id}   Poll async board session status
   POST /api/interview-prep      Run interview research pipeline
   GET  /api/health              Server liveness check
+
+  Interview cognitive memory (Pluely live-coaching integration — see
+  docs/openresearch-integration-requirements.md):
+  POST   /v1/interview/answer                              Live, retrieval-grounded answer (SSE)
+  GET/PUT /v1/interview/profile/{candidate_id}              Résumé/JD/instructions
+  GET/POST /v1/interview/answer-bank/{candidate_id}         List/create answer-bank entries
+  PUT/DELETE /v1/interview/answer-bank/{candidate_id}/{id}  Update/delete an entry
+  GET  /v1/interview/skills                                 List registered skills
+  POST /v1/interview/skills/{skill_name}/apply              Apply a skill (e.g. pre_interview_drill)
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
 import yaml
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
+from agents.api_utils import LLMClient
+from agents.stock.query_router import QueryRouterAgent
+from agents.stock.comparison_analyst import ComparisonAnalystAgent
+from agents.stock.trend_analyst import TrendAnalystAgent
+from agents.stock.sec_ingest import SECIngestAgent
+from agents.stock.sec_qa import SECQAAgent
+from agents.stock.document_insights import DocumentInsightsAgent
+from agents.stock.xbrl_fallback import XBRLFallbackAgent
+from agents.stock.portfolio_optimizer import PortfolioOptimizerAgent
 from pipelines.stock_pipeline import StockResearchPipeline
+from pipelines.primer_pipeline import ResearchPrimerPipeline
 from pipelines.board_pipeline import ExecutiveBoardPipeline
 from pipelines.interview_pipeline import InterviewPipeline
 from pipelines.realestate_pipeline import RealEstatePipeline
-from schemas.stock import StockPipelineInput, ResearchBrief
+from schemas.stock import StockPipelineInput, ResearchBrief, TrendData
+from schemas.query import QueryRouterResult
+from schemas.comparison import ComparisonBrief
+from schemas.watchlist import WatchlistItem
+from schemas.portfolio import PortfolioOptimizeRequest, PortfolioOptimizationResult
+from schemas.primer import PrimerPipelineInput, ResearchPrimer
+from schemas.sec_insights import SECAnswer
+from schemas.document_insights import DocumentInsightAnswer
+from store.sec_vector_store import SECVectorStore
 from schemas.board import BoardSessionInput, BoardBriefing
 from schemas.interview import InterviewPipelineInput, InterviewPrepBrief
 from schemas.tracker import ApplicationStage, ApplicationOutcome
@@ -38,6 +79,21 @@ from schemas.realestate import RealEstatePipelineInput, RealEstateBrief
 from store.profile_store import ProfileStore
 from store.application_store import ApplicationStore
 from store.skills_store import SkillsStore
+from store.watchlist_store import WatchlistStore
+from store.portfolio_store import PortfolioStore
+from agents.interview.memory_judge_agent import MemoryJudgeAgent
+from agents.interview.skills.base import get_skill, list_skills, register_skill
+from agents.interview.skills.live_interview_coach import LiveInterviewCoachSkill
+from agents.interview.skills.pre_interview_drill import PreInterviewDrillSkill
+from memory.interview_memory import InterviewMemoryStore
+from memory.interview_vector_store import InterviewVectorStore
+from schemas.interview_memory import (
+    AnswerBankEntry,
+    AnswerBankEntryCreate,
+    AnswerRequest,
+    InterviewProfile,
+    SkillApplyRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +105,44 @@ _board_sessions: dict[str, dict[str, Any]] = {}
 
 # ── Pipeline singletons (initialized at startup) ──────────────────────────────
 _stock_pipeline:      Optional[StockResearchPipeline] = None
+_primer_pipeline:     Optional[ResearchPrimerPipeline] = None
 _board_pipeline:      Optional[ExecutiveBoardPipeline] = None
 _interview_pipeline:  Optional[InterviewPipeline] = None
 _realestate_pipeline: Optional[RealEstatePipeline] = None
+
+# ── Stock-vertical helper agents (initialized at startup) ─────────────────────
+_query_router:        Optional[QueryRouterAgent] = None
+_comparison_analyst:  Optional[ComparisonAnalystAgent] = None
+_trend_analyst:       Optional[TrendAnalystAgent] = None
+_sec_qa_agent:        Optional[SECQAAgent] = None
+_document_insights:   Optional[DocumentInsightsAgent] = None
+_portfolio_optimizer: Optional[PortfolioOptimizerAgent] = None
 
 # ── Persistent stores (initialized at startup) ────────────────────────────────
 _profile_store:     Optional[ProfileStore] = None
 _app_store:         Optional[ApplicationStore] = None
 _skills_store:      Optional[SkillsStore] = None
+_watchlist_store:   Optional[WatchlistStore] = None
+_portfolio_store:   Optional[PortfolioStore] = None
+
+# ── Interview cognitive memory (Pluely live-coaching integration) ─────────────
+# Separate from the pipeline/stores above — see docs/openresearch-integration-
+# requirements.md §6.1. One InterviewMemoryStore per candidate_id, cached here;
+# the vector store and skills are shared singletons the per-candidate stores use.
+_interview_vector_store: Optional[InterviewVectorStore] = None
+_interview_memory_stores: dict[str, InterviewMemoryStore] = {}
+_live_interview_coach: Optional[LiveInterviewCoachSkill] = None
+_pre_interview_drill: Optional[PreInterviewDrillSkill] = None
+
+
+def _get_interview_memory(candidate_id: str) -> InterviewMemoryStore:
+    if candidate_id not in _interview_memory_stores:
+        cfg = _load_config()
+        data_dir = cfg.get("interview_memory", {}).get("data_dir", "data")
+        _interview_memory_stores[candidate_id] = InterviewMemoryStore(
+            candidate_id, Path(data_dir) / "interview_memory", _interview_vector_store
+        )
+    return _interview_memory_stores[candidate_id]
 
 
 def _load_config() -> dict:
@@ -67,8 +153,11 @@ def _load_config() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize pipelines and stores on startup, clean up on shutdown."""
-    global _stock_pipeline, _board_pipeline, _interview_pipeline
-    global _profile_store, _app_store, _skills_store
+    global _stock_pipeline, _primer_pipeline, _board_pipeline, _interview_pipeline
+    global _query_router, _comparison_analyst, _trend_analyst, _sec_qa_agent, _document_insights
+    global _profile_store, _app_store, _skills_store, _watchlist_store
+    global _portfolio_store, _portfolio_optimizer
+    global _interview_vector_store, _live_interview_coach, _pre_interview_drill
 
     logger.info("Initializing pipelines...")
     try:
@@ -76,6 +165,21 @@ async def lifespan(app: FastAPI):
         logger.info("Stock Research pipeline ready.")
     except Exception as e:
         logger.warning(f"Stock pipeline init failed (check config.yaml): {e}")
+
+    try:
+        _primer_pipeline = ResearchPrimerPipeline.from_config(CONFIG_PATH)
+        logger.info("Research Primer pipeline ready.")
+    except Exception as e:
+        logger.warning(f"Primer pipeline init failed (check config.yaml): {e}")
+
+    try:
+        _stock_llm          = LLMClient.from_config(CONFIG_PATH)
+        _query_router        = QueryRouterAgent(_stock_llm)
+        _comparison_analyst  = ComparisonAnalystAgent(_stock_llm)
+        _trend_analyst       = TrendAnalystAgent()
+        logger.info("Query router, comparison analyst, and trend analyst ready.")
+    except Exception as e:
+        logger.warning(f"Query router / comparison / trend init failed: {e}")
 
     try:
         _board_pipeline = ExecutiveBoardPipeline.from_config(CONFIG_PATH)
@@ -104,6 +208,54 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Interview stores init failed: {e}")
 
+    try:
+        _watchlist_store = WatchlistStore.from_config(CONFIG_PATH)
+        logger.info("Watchlist store ready.")
+    except Exception as e:
+        logger.warning(f"Watchlist store init failed: {e}")
+
+    try:
+        _portfolio_store = PortfolioStore.from_config(CONFIG_PATH)
+        _portfolio_optimizer = PortfolioOptimizerAgent()
+        logger.info("Portfolio store and optimizer ready.")
+    except Exception as e:
+        logger.warning(f"Portfolio store/optimizer init failed: {e}")
+
+    try:
+        sec_llm = LLMClient.from_config(CONFIG_PATH)
+        _sec_qa_agent = SECQAAgent(
+            llm=sec_llm,
+            vector_store=SECVectorStore.from_config(CONFIG_PATH),
+            ingest=SECIngestAgent(),
+        )
+        logger.info("SEC Insights (SECQAAgent) ready.")
+    except Exception as e:
+        logger.warning(f"SEC Insights init failed: {e}")
+
+    try:
+        _interview_vector_store = InterviewVectorStore.from_config(CONFIG_PATH)
+        judge_agent = MemoryJudgeAgent(LLMClient.from_config(CONFIG_PATH))
+        _live_interview_coach = LiveInterviewCoachSkill(LLMClient.from_config(CONFIG_PATH), judge_agent)
+        _pre_interview_drill = PreInterviewDrillSkill()
+        register_skill(_live_interview_coach)
+        register_skill(_pre_interview_drill)
+        logger.info("Interview cognitive memory ready (live_interview_coach, pre_interview_drill).")
+    except Exception as e:
+        logger.warning(f"Interview cognitive memory init failed (check config.yaml llm.provider_chain): {e}")
+
+    try:
+        _document_insights = DocumentInsightsAgent(
+            LLMClient.from_config(CONFIG_PATH), xbrl_fallback=XBRLFallbackAgent()
+        )
+        from integrations import liteparse
+        if liteparse.is_available():
+            logger.info("Document Insights (LiteParse) ready.")
+        else:
+            logger.warning("Document Insights agent ready, but LiteParse CLI not found — "
+                            "run `npm install` in tools/liteparse/.")
+    except Exception as e:
+        logger.warning(f"Document Insights init failed: {e}")
+
     yield
     logger.info("Server shutting down.")
 
@@ -126,7 +278,12 @@ app.add_middleware(
     allow_origins=cors_origins,
     allow_origin_regex=r"chrome-extension://.*",
     allow_credentials=True,
-    allow_methods=["GET", "POST"],
+    # PUT/DELETE added for the interview cognitive-memory endpoints
+    # (profile replace, answer-bank update/delete) — a browser-based caller
+    # (Chrome extension, or Pluely if it calls via webview fetch() rather
+    # than its Rust backend) would otherwise have those blocked by the
+    # CORS preflight, since only GET/POST were previously allowed.
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -138,6 +295,40 @@ class StockResearchRequest(BaseModel):
     depth: str = "full"         # "quick" | "full"
     provider: Optional[str] = None
     export_to_tolaria: bool = False  # auto-save brief to Tolaria vault
+
+
+class StockPrimerRequest(BaseModel):
+    ticker: str
+    depth: str = "full"
+
+
+class SECInsightsRequest(BaseModel):
+    ticker: str
+    question: str
+    force_refresh: bool = False   # re-ingest filings even if already cached
+
+
+class StockQueryRequest(BaseModel):
+    """Natural-language front door — see QueryRouterAgent."""
+    query: str
+    depth: Optional[str] = None  # override the router's guessed depth if provided
+
+
+class StockCompareRequest(BaseModel):
+    ticker_a: str
+    ticker_b: str
+    depth: str = "full"
+
+
+class WatchlistAddRequest(BaseModel):
+    ticker: str
+    notes: Optional[str] = None
+
+
+class PortfolioHoldingRequest(BaseModel):
+    ticker: str
+    shares: float
+    cost_basis: Optional[float] = None
 
 
 class BoardSessionRequest(BaseModel):
@@ -273,6 +464,234 @@ def stock_research(request: StockResearchRequest):
         except Exception as e:
             logger.warning(f"Tolaria stock export failed (non-fatal): {e}")
 
+    return brief
+
+
+@app.post("/api/stock-primer", response_model=ResearchPrimer)
+def stock_primer(request: StockPrimerRequest):
+    """
+    Research Primer — a richer, multi-section document (business foundation,
+    driver tree, debate map, adversarial bear-case review, underwriting
+    summary) built on top of the existing stock research pipeline. See
+    requirements.md for the "middle ground" scoping decision.
+    """
+    if _primer_pipeline is None:
+        raise HTTPException(503, "Primer pipeline not initialized. Check config.yaml.")
+    if not request.ticker or len(request.ticker) > 15:
+        raise HTTPException(400, "Invalid ticker symbol.")
+
+    try:
+        return _primer_pipeline.run(PrimerPipelineInput(ticker=request.ticker, depth=request.depth))
+    except Exception as e:
+        logger.error(f"Primer pipeline failed for {request.ticker}: {e}", exc_info=True)
+        raise HTTPException(500, f"Primer pipeline error: {str(e)[:200]}")
+
+
+@app.post("/api/stock-document-insights", response_model=DocumentInsightAnswer)
+async def stock_document_insights(ticker: str = Form(...), file: UploadFile = File(...)):
+    """
+    Document Insights — upload a PDF (earnings-call transcript, analyst
+    report, filing excerpt) for a ticker; LiteParse extracts text + bounding
+    boxes locally, then an LLM summarizes it with page-level citations.
+    Fills requirement #5 (earnings-call summarization) — see requirements.md.
+    """
+    if _document_insights is None:
+        raise HTTPException(503, "Document Insights not initialized.")
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are supported.")
+
+    import os
+    import tempfile
+
+    contents = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(contents)
+        tmp_path = tmp.name
+
+    try:
+        return _document_insights.summarize(ticker, tmp_path, document_name=file.filename)
+    except Exception as e:
+        logger.error(f"Document insights failed for {ticker}: {e}", exc_info=True)
+        raise HTTPException(500, f"Document insights error: {str(e)[:200]}")
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.post("/api/sec-insights", response_model=SECAnswer)
+def sec_insights(request: SECInsightsRequest):
+    """
+    SEC Insights — answer a question about a ticker's SEC filings using local
+    semantic search over ingested 10-K/10-Q sections (chromadb + EdgarTools),
+    with an LLM answer citing which excerpts it used. First call for a ticker
+    triggers ingestion (may take a few seconds); subsequent calls reuse the
+    local cache unless force_refresh=true.
+    """
+    if _sec_qa_agent is None:
+        raise HTTPException(503, "SEC Insights not initialized. Check chromadb/edgartools install.")
+    if not request.ticker or len(request.ticker) > 15:
+        raise HTTPException(400, "Invalid ticker symbol.")
+    if not request.question.strip():
+        raise HTTPException(400, "Question cannot be empty.")
+
+    try:
+        return _sec_qa_agent.answer(request.ticker, request.question, force_refresh=request.force_refresh)
+    except Exception as e:
+        logger.error(f"SEC Insights failed for {request.ticker}: {e}", exc_info=True)
+        raise HTTPException(500, f"SEC Insights error: {str(e)[:200]}")
+
+
+def _run_comparison(ticker_a: str, ticker_b: str, depth: str) -> ComparisonBrief:
+    if _stock_pipeline is None:
+        raise HTTPException(503, "Stock pipeline not initialized. Check config.yaml.")
+    if _comparison_analyst is None:
+        raise HTTPException(503, "Comparison analyst not initialized. Check config.yaml.")
+
+    try:
+        brief_a = _stock_pipeline.run(StockPipelineInput(ticker=ticker_a, depth=depth))
+        brief_b = _stock_pipeline.run(StockPipelineInput(ticker=ticker_b, depth=depth))
+        return _comparison_analyst.compare(brief_a, brief_b)
+    except Exception as e:
+        logger.error(f"Stock comparison failed for {ticker_a} vs {ticker_b}: {e}", exc_info=True)
+        raise HTTPException(500, f"Comparison pipeline error: {str(e)[:200]}")
+
+
+@app.post("/api/stock-compare", response_model=ComparisonBrief)
+def stock_compare(request: StockCompareRequest):
+    """
+    Requirement #3 — side-by-side comparison of two stocks.
+    Runs the full stock research pipeline for both tickers, then an LLM
+    comparison pass over the two resulting briefs (no re-fetching of data).
+    """
+    return _run_comparison(
+        request.ticker_a.upper().strip(),
+        request.ticker_b.upper().strip(),
+        request.depth,
+    )
+
+
+@app.get("/api/stock-trend/{ticker}", response_model=TrendData)
+def stock_trend(ticker: str):
+    """
+    Requirement #7 — five-year price + annual financial trend, plus a
+    deterministically-computed previous-year summary.
+    """
+    if _trend_analyst is None:
+        raise HTTPException(503, "Trend analyst not initialized.")
+    if not ticker or len(ticker) > 15:
+        raise HTTPException(400, "Invalid ticker symbol.")
+    return _trend_analyst.fetch(ticker)
+
+
+@app.get("/api/watchlist")
+def get_watchlist():
+    """Requirement #4 — list the watchlist (up to 20 tickers)."""
+    if _watchlist_store is None:
+        raise HTTPException(503, "Watchlist store not initialized.")
+    return {"watchlist": [i.model_dump() for i in _watchlist_store.load()]}
+
+
+@app.post("/api/watchlist")
+def add_to_watchlist(request: WatchlistAddRequest):
+    if _watchlist_store is None:
+        raise HTTPException(503, "Watchlist store not initialized.")
+    try:
+        items = _watchlist_store.add(request.ticker, notes=request.notes)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"watchlist": [i.model_dump() for i in items]}
+
+
+@app.delete("/api/watchlist/{ticker}")
+def remove_from_watchlist(ticker: str):
+    if _watchlist_store is None:
+        raise HTTPException(503, "Watchlist store not initialized.")
+    items = _watchlist_store.remove(ticker)
+    return {"watchlist": [i.model_dump() for i in items]}
+
+
+@app.get("/api/portfolio")
+def get_portfolio():
+    if _portfolio_store is None:
+        raise HTTPException(503, "Portfolio store not initialized.")
+    return {"portfolio": [i.model_dump() for i in _portfolio_store.load()]}
+
+
+@app.post("/api/portfolio")
+def upsert_portfolio_holding(request: PortfolioHoldingRequest):
+    if _portfolio_store is None:
+        raise HTTPException(503, "Portfolio store not initialized.")
+    if request.shares <= 0:
+        raise HTTPException(400, "Shares must be positive.")
+    items = _portfolio_store.upsert(request.ticker, request.shares, request.cost_basis)
+    return {"portfolio": [i.model_dump() for i in items]}
+
+
+@app.delete("/api/portfolio/{ticker}")
+def remove_portfolio_holding(ticker: str):
+    if _portfolio_store is None:
+        raise HTTPException(503, "Portfolio store not initialized.")
+    items = _portfolio_store.remove(ticker)
+    return {"portfolio": [i.model_dump() for i in items]}
+
+
+@app.post("/api/portfolio-optimize", response_model=PortfolioOptimizationResult)
+def optimize_portfolio(request: PortfolioOptimizeRequest):
+    if _portfolio_store is None or _portfolio_optimizer is None:
+        raise HTTPException(503, "Portfolio store/optimizer not initialized.")
+    holdings = _portfolio_store.load()
+    if not holdings:
+        raise HTTPException(400, "Portfolio is empty — add holdings before optimizing.")
+    try:
+        return _portfolio_optimizer.optimize(holdings, request)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/query")
+def stock_query(request: StockQueryRequest):
+    """
+    Natural-language front door (see QueryRouterAgent). Accepts a free-text
+    question, extracts intent + ticker(s) — verified against yfinance, never
+    trusting an LLM ticker guess blindly — then dispatches to the appropriate
+    existing pipeline. If the router can't confidently resolve a ticker, it
+    returns a clarification question instead of guessing.
+    """
+    if _query_router is None:
+        raise HTTPException(503, "Query router not initialized. Check config.yaml.")
+    if _stock_pipeline is None:
+        raise HTTPException(503, "Stock pipeline not initialized. Check config.yaml.")
+
+    result: QueryRouterResult = _query_router.route(request.query)
+
+    if result.clarification_needed:
+        return {"clarification_needed": True, "message": result.clarification_question}
+
+    depth = request.depth or result.depth
+
+    if result.intent == "comparison" and len(result.resolved) >= 2:
+        return _run_comparison(result.resolved[0].ticker, result.resolved[1].ticker, depth)
+
+    if result.intent == "watchlist_add" and result.resolved:
+        if _watchlist_store is None:
+            raise HTTPException(503, "Watchlist store not initialized.")
+        try:
+            items = _watchlist_store.add(result.resolved[0].ticker)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"watchlist": [i.model_dump() for i in items]}
+
+    if not result.resolved:
+        return {
+            "clarification_needed": True,
+            "message": "I couldn't resolve a ticker to analyze — could you name the company or ticker directly?",
+        }
+
+    ticker = result.resolved[0].ticker
+    try:
+        brief = _stock_pipeline.run(StockPipelineInput(ticker=ticker, depth=depth))
+    except Exception as e:
+        logger.error(f"Query-routed stock research failed for {ticker}: {e}", exc_info=True)
+        raise HTTPException(500, f"Research pipeline error: {str(e)[:200]}")
     return brief
 
 
@@ -928,6 +1347,154 @@ def get_skills_stats():
     if not _skills_store:
         raise HTTPException(503, "Skills store not initialised.")
     return _skills_store.stats()
+
+
+# ── Interview cognitive memory (Pluely live-coaching integration) ─────────────
+# See docs/openresearch-integration-requirements.md §2/§3/§6. Separate from
+# /api/interview-prep and /api/learn/* above (pre-interview JD/resume research
+# and the single-user SM-2 tracker) — this is the candidate_id-scoped memory
+# behind live, in-interview answer generation.
+
+def _chunk_answer_text(text: str, chunk_size: int = 60):
+    """Pseudo-streams a fully-generated answer as SSE chunks.
+
+    NOTE: agents/api_utils.LLMClient.create() is a blocking, non-streaming
+    call — there is no token-level streaming from the LLM in this codebase
+    yet. This chunks the complete response after generation so the wire
+    contract (§2: incremental `answer_chunk` frames, final `done: true`)
+    is satisfied, but it does not yet achieve true first-token latency —
+    the full answer is generated before the first chunk is sent. Wiring
+    real provider-level streaming into LLMClient is a follow-up, not done here.
+    """
+    for i in range(0, len(text), chunk_size):
+        yield text[i : i + chunk_size]
+
+
+async def _run_judge_and_record(candidate_id: str, question_record_id: str) -> None:
+    """Background task — runs after the answer has already been streamed back,
+    per §6's latency-budget open item (judge scoring must not block the next answer)."""
+    if _live_interview_coach is None or not question_record_id:
+        return
+    try:
+        memory = _get_interview_memory(candidate_id)
+        _live_interview_coach.judge_and_record(memory, question_record_id)
+    except Exception as e:
+        logger.error(f"judge_and_record failed for question {question_record_id!r}: {e}")
+
+
+@app.post("/v1/interview/answer")
+def interview_answer(request: AnswerRequest):
+    """
+    Real-time, retrieval-grounded answer generation for a live interview
+    question (requirements doc §2). Streams SSE frames; judge scoring of the
+    answer just sent runs afterward as a background task, not before this
+    responds.
+    """
+    if _live_interview_coach is None:
+        raise HTTPException(503, "Interview cognitive memory not initialized. Check config.yaml llm.provider_chain.")
+    if not request.question.strip():
+        raise HTTPException(400, "question must not be empty.")
+
+    memory = _get_interview_memory(request.candidate_id)
+    try:
+        result = _live_interview_coach.apply(
+            memory,
+            question=request.question,
+            session_id=request.session_id,
+            conversation_history=request.conversation_history,
+            answer_style=request.answer_style,
+        )
+    except Exception as e:
+        logger.error(f"live_interview_coach.apply failed: {e}")
+        raise HTTPException(502, f"Answer generation failed: {e}")
+
+    def event_stream():
+        for chunk in _chunk_answer_text(result.answer_text):
+            yield f"data: {json.dumps({'answer_chunk': chunk, 'done': False})}\n\n"
+        final = {
+            "answer_chunk": "",
+            "done": True,
+            "metadata": {"matched_sources": [m.model_dump() for m in result.matched_sources]},
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+
+    background = BackgroundTask(_run_judge_and_record, request.candidate_id, result.question_record_id)
+    return StreamingResponse(event_stream(), media_type="text/event-stream", background=background)
+
+
+@app.get("/v1/interview/profile/{candidate_id}", response_model=InterviewProfile)
+def get_interview_profile(candidate_id: str):
+    return _get_interview_memory(candidate_id).get_profile()
+
+
+@app.put("/v1/interview/profile/{candidate_id}", response_model=InterviewProfile)
+def put_interview_profile(candidate_id: str, profile: InterviewProfile):
+    memory = _get_interview_memory(candidate_id)
+    profile.candidate_id = candidate_id
+    memory.set_profile(profile)
+    return memory.get_profile()
+
+
+@app.get("/v1/interview/answer-bank/{candidate_id}")
+def list_interview_answer_bank(candidate_id: str):
+    return {"entries": _get_interview_memory(candidate_id).list_answer_bank()}
+
+
+@app.post("/v1/interview/answer-bank/{candidate_id}", response_model=AnswerBankEntry)
+def create_interview_answer_bank_entry(candidate_id: str, entry: AnswerBankEntryCreate):
+    memory = _get_interview_memory(candidate_id)
+    duplicate_id = memory.find_near_duplicate_answer_bank_entry(entry.content)
+    if duplicate_id:
+        raise HTTPException(409, f"Near-duplicate of existing entry '{duplicate_id}'.")
+    full_entry = AnswerBankEntry(
+        id=str(uuid.uuid4())[:12], candidate_id=candidate_id, **entry.model_dump()
+    )
+    return memory.add_answer_bank_entry(full_entry)
+
+
+@app.put("/v1/interview/answer-bank/{candidate_id}/{entry_id}", response_model=AnswerBankEntry)
+def update_interview_answer_bank_entry(candidate_id: str, entry_id: str, entry: AnswerBankEntryCreate):
+    memory = _get_interview_memory(candidate_id)
+    if not memory.get_answer_bank_entry(entry_id):
+        raise HTTPException(404, f"Answer-bank entry '{entry_id}' not found.")
+    full_entry = AnswerBankEntry(id=entry_id, candidate_id=candidate_id, **entry.model_dump())
+    return memory.add_answer_bank_entry(full_entry)
+
+
+@app.delete("/v1/interview/answer-bank/{candidate_id}/{entry_id}")
+def delete_interview_answer_bank_entry(candidate_id: str, entry_id: str):
+    memory = _get_interview_memory(candidate_id)
+    if not memory.delete_answer_bank_entry(entry_id):
+        raise HTTPException(404, f"Answer-bank entry '{entry_id}' not found.")
+    return {"deleted": entry_id}
+
+
+@app.get("/v1/interview/skills")
+def list_interview_skills():
+    """Skills registered against the interview cognitive memory (e.g.
+    live_interview_coach, pre_interview_drill) — apply one via
+    POST /v1/interview/skills/{skill_name}/apply."""
+    return {"skills": list_skills()}
+
+
+@app.post("/v1/interview/skills/{skill_name}/apply")
+def apply_interview_skill(skill_name: str, request: SkillApplyRequest):
+    """
+    Generic skill dispatcher over a candidate's memory. E.g. for
+    pre_interview_drill: {"candidate_id": "...", "args": {"action": "due_today"}}
+    or {"args": {"action": "record_review", "question_id": "...", "quality": 4}}.
+    """
+    try:
+        skill = get_skill(skill_name)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+    memory = _get_interview_memory(request.candidate_id)
+    try:
+        result = skill.apply(memory, **request.args)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, str(e))
+    return {"result": result}
 
 
 # ── Background task ───────────────────────────────────────────────────────────

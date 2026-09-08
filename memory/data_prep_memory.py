@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from autoresearch.schemas import DataPrepReport
+from schemas import DataPrepReport
 
 
 class DataPrepMemory:

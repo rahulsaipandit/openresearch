@@ -8,7 +8,7 @@ This is used to steer CodeGen and prevent common data interpretation errors.
 import logging
 from typing import Optional
 
-from autoresearch.schemas import ProblemSpec, DataHealthReport, DataPrepReport, TaskType
+from schemas import ProblemSpec, DataHealthReport, DataPrepReport, TaskType
 
 logger = logging.getLogger(__name__)
 

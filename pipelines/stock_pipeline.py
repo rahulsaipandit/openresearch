@@ -33,6 +33,7 @@ from agents.stock.news_aggregator import NewsAggregatorAgent
 from agents.stock.fundamentals_analyst import FundamentalsAnalystAgent
 from agents.stock.sentiment_analyst import SentimentAnalystAgent
 from agents.stock.research_synthesizer import ResearchSynthesizerAgent
+from agents.stock.backtest_engine import BacktestEngine
 from schemas.stock import ResearchBrief, StockPipelineInput
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class StockResearchPipeline:
         self.fundamentals    = FundamentalsAnalystAgent(llm, verbose)
         self.sentiment       = SentimentAnalystAgent(llm, verbose)
         self.synthesizer     = ResearchSynthesizerAgent(llm, verbose)
+        self.backtester      = BacktestEngine()
 
     @classmethod
     def from_config(cls, config_path: str = "config.yaml") -> "StockResearchPipeline":
@@ -122,6 +124,19 @@ class StockResearchPipeline:
         institutional_raw    = raw_data.get("institutional")     # None if Equibles not running
         market_structure_raw = raw_data.get("market_structure")  # None if Equibles not running
         technicals_raw       = raw_data.get("technicals")        # None if Equibles not running
+        signals              = raw_data.get("signals")           # None if depth="quick"
+
+        # ── Backtest the deterministic signals (depth="full" only) ───────────
+        # Source reference: https://arxiv.org/abs/2607.15414 — see
+        # docs/designStock_TechnicalSignalsAndBacktesting.md
+        backtest = None
+        if signals is not None:
+            if self.verbose:
+                print(f"  [1/5] Backtesting signals...")
+            try:
+                backtest = self.backtester.run(ticker, signals)
+            except Exception as e:
+                logger.warning(f"BacktestEngine failed for {ticker}: {e}")
 
         # ── Node 2: Fetch news + SEC filings (+ Equibles full-text + insiders) ──
         if self.verbose:
@@ -153,6 +168,8 @@ class StockResearchPipeline:
             institutional_raw=institutional_raw,
             market_structure_raw=market_structure_raw,
             technicals_raw=technicals_raw,
+            signals=signals,
+            backtest=backtest,
         )
 
         if self.verbose:

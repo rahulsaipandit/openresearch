@@ -25,6 +25,8 @@ from schemas.stock import (
     MarketStructureData,
     InsiderTransaction,
     TechnicalIndicators,
+    SignalSet,
+    BacktestResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,6 +75,8 @@ class ResearchSynthesizerAgent:
         institutional_raw: dict | None = None,
         market_structure_raw: dict | None = None,
         technicals_raw: dict | None = None,
+        signals: SignalSet | None = None,
+        backtest: BacktestResult | None = None,
     ) -> ResearchBrief:
         """
         Synthesize all research signals into a ResearchBrief.
@@ -81,12 +85,19 @@ class ResearchSynthesizerAgent:
         returned by DataFetcherAgent when Equibles is running. They are:
           1. Injected into the LLM prompt so the brief cites real signals.
           2. Parsed into typed schema objects and attached to the returned ResearchBrief.
+
+        signals/backtest come from SignalAgent + BacktestEngine (deterministic,
+        no LLM — see agents/stock/signal_agent.py, agents/stock/backtest_engine.py,
+        source reference https://arxiv.org/abs/2607.15414). They are already typed,
+        so they're injected into the prompt as pre-computed facts to narrate and
+        attached to the brief as-is — never recomputed by the LLM.
         """
         from datetime import date
 
         prompt = self._build_prompt(
             ticker, price_data, fundamentals, sentiment,
             institutional_raw, market_structure_raw, technicals_raw,
+            signals, backtest,
         )
 
         if self.verbose:
@@ -112,6 +123,8 @@ class ResearchSynthesizerAgent:
             data["institutional"]    = institutional.model_dump() if institutional else None
             data["market_structure"] = market_structure.model_dump() if market_structure else None
             data["technicals"]       = technicals.model_dump() if technicals else None
+            data["signals"]          = signals.model_dump() if signals else None
+            data["backtest"]         = backtest.model_dump() if backtest else None
             # Collect source URLs from news
             data.setdefault("sources", [
                 h.get("url", "") for h in news_data.get("headlines", [])[:5]
@@ -123,6 +136,7 @@ class ResearchSynthesizerAgent:
             return self._fallback_brief(
                 ticker, price_data, fundamentals, sentiment,
                 institutional, market_structure, technicals,
+                signals, backtest,
             )
 
     # ── Prompt builder ─────────────────────────────────────────────────────────
@@ -136,6 +150,8 @@ class ResearchSynthesizerAgent:
         institutional_raw: dict | None,
         market_structure_raw: dict | None,
         technicals_raw: dict | None,
+        signals: SignalSet | None = None,
+        backtest: BacktestResult | None = None,
     ) -> str:
         from datetime import date
 
@@ -266,6 +282,31 @@ class ResearchSynthesizerAgent:
                 crossover = "bullish" if macd > macd_sig else "bearish"
                 lines.append(f"  MACD: {macd:.3f} vs signal {macd_sig:.3f} ({crossover} crossover)")
 
+        # ── Deterministic signals + backtest (no LLM in this data — narrate only) ──
+        if signals:
+            lines.append("\n=== Technical Signals (deterministic, rule-based) ===")
+            lines.append(f"  Current signal: {signals.current_signal}")
+            if signals.summary:
+                lines.append(f"  {signals.summary}")
+            if signals.patterns:
+                pattern_str = ", ".join(f"{p.pattern} ({p.date})" for p in signals.patterns[-5:])
+                lines.append(f"  Recent candlestick patterns: {pattern_str}")
+
+        if backtest:
+            lines.append("\n=== Backtest (deterministic, sealed out-of-sample window) ===")
+            if backtest.strategy_return_pct is not None:
+                lines.append(f"  Strategy annualized return: {backtest.strategy_return_pct:.1f}%")
+            if backtest.strategy_sharpe is not None:
+                lines.append(f"  Strategy Sharpe: {backtest.strategy_sharpe:.2f}")
+            if backtest.benchmark_return_pct is not None:
+                lines.append(f"  {backtest.benchmark_ticker} annualized return: {backtest.benchmark_return_pct:.1f}%")
+            if backtest.out_of_sample_return_pct is not None:
+                lines.append(
+                    f"  Out-of-sample return ({backtest.out_of_sample_window}): "
+                    f"{backtest.out_of_sample_return_pct:.1f}%"
+                )
+            lines.append(f"  Trades generated: {backtest.num_trades}")
+
         lines.append(f"\nWrite a ResearchBrief JSON matching this schema:\n{BRIEF_SCHEMA}")
         return "\n".join(lines)
 
@@ -375,6 +416,8 @@ class ResearchSynthesizerAgent:
         institutional: InstitutionalSnapshot | None = None,
         market_structure: MarketStructureData | None = None,
         technicals: TechnicalIndicators | None = None,
+        signals: SignalSet | None = None,
+        backtest: BacktestResult | None = None,
     ) -> ResearchBrief:
         from datetime import date
         return ResearchBrief(
@@ -395,5 +438,7 @@ class ResearchSynthesizerAgent:
             institutional=institutional,
             market_structure=market_structure,
             technicals=technicals,
+            signals=signals,
+            backtest=backtest,
             sources=[],
         )

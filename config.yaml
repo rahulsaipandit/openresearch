@@ -16,15 +16,15 @@
 
 llm:
   provider_chain:
-    - provider: anthropic
-      model: claude-sonnet-4-6
-      api_key: ""             # get from console.anthropic.com
+    - provider: openai_compatible
+      base_url: http://192.168.12.247:1234/v1
+      model: qwen/qwen3.5-9b:2
+      api_key: lm-studio      # placeholder — not validated by local servers
 
-    # Uncomment to add a local LLM fallback (LM Studio / Ollama):
-    # - provider: openai_compatible
-    #   base_url: http://localhost:1234/v1
-    #   model: qwen3-27b      # or any model loaded in LM Studio / Ollama
-    #   api_key: lm-studio    # placeholder — not validated by local servers
+    # Uncomment to add Anthropic as a fallback once you have a key:
+    # - provider: anthropic
+    #   model: claude-sonnet-4-6
+    #   api_key: ""             # get from console.anthropic.com
 
 
 # ── Stock Research ────────────────────────────────────────────────────────────
@@ -36,6 +36,14 @@ stock_research:
     polygon_key: ""                 # free tier: 5 req/min  — polygon.io
     news_api_key: ""                # free tier: 100 req/day — newsapi.org
   cache_ttl_hours: 4               # cache research results for 4 hours
+
+  # Local storage directory for the watchlist, portfolio, and SEC filing
+  # vectors (store/watchlist_store.py, store/portfolio_store.py,
+  # store/sec_vector_store.py). Previously these all read interview_research's
+  # data_dir by copy-paste — moved here since they're stock-vertical data,
+  # unrelated to interview prep. Customizing interview_research.data_dir no
+  # longer relocates this data, and vice versa.
+  data_dir: data
 
 
 # ── Executive Board ───────────────────────────────────────────────────────────
@@ -97,6 +105,18 @@ interview_research:
   # Local storage directory for profile, application tracker, and skills bank.
   # All three files are written here: profile.json, applications.json, skills.json
   # Also generates applications.md (human-readable markdown table).
+  data_dir: data
+
+
+# ── Interview Cognitive Memory (Pluely live-coaching integration) ─────────────
+# Separate from interview_research above — this backs POST /v1/interview/answer,
+# the Skills API, and the pre-interview drill. See
+# docs/openresearch-integration-requirements.md §6/§6.1 for the design:
+# markdown files with YAML frontmatter (not JSON), a chromadb vector layer,
+# and a lightweight typed-edge graph, all scoped per candidate_id.
+
+interview_memory:
+  # Root of interview_memory/<candidate_id>/... and interview_memory_vectors/
   data_dir: data
 
 

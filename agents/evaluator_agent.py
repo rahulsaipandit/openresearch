@@ -27,10 +27,10 @@ import logging
 import re
 from typing import Any, Optional
 
-from autoresearch.agents.api_utils import LLMClient
-from autoresearch.memory.experiment_memory import ExperimentMemory
+from agents.api_utils import LLMClient
+from memory.experiment_memory import ExperimentMemory
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     ExecutionResult,
     ExecutionStatus,

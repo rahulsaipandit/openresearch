@@ -15,7 +15,7 @@ from enum import Enum
 from typing import Optional, Annotated
 from pydantic import BaseModel, Field
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     MethodsCatalog,

@@ -27,7 +27,7 @@ from typing import Optional
 
 import nbformat
 
-from autoresearch.schemas import (
+from schemas import (
     ProblemSpec,
     DataHealthReport,
     MethodSpec,
@@ -35,14 +35,14 @@ from autoresearch.schemas import (
     ExecutionStatus,
     ModelArtifact,
 )
-from autoresearch.tools.kaggle_client import (
+from tools.kaggle_client import (
     KaggleClient,
     KernelExecutionError,
     KernelTimeoutError,
 )
-from autoresearch.agents.codegen_agent import CodeGenAgent
-from autoresearch.agents.error_memory import recall, remember, mark_failed, format_for_prompt
-from autoresearch.agents.api_utils import PromptBudget
+from agents.codegen_agent import CodeGenAgent
+from agents.error_memory import recall, remember, mark_failed, format_for_prompt
+from agents.api_utils import PromptBudget
 
 logger = logging.getLogger(__name__)
 
