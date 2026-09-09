@@ -144,15 +144,68 @@ export interface WatchlistItem {
 }
 
 export interface ClarificationResponse {
+  result_type: "clarification";
   clarification_needed: true;
   message: string;
 }
 
 export interface WatchlistResponse {
+  result_type: "watchlist";
   watchlist: WatchlistItem[];
 }
 
-export type QueryResponse = ClarificationResponse | ResearchBrief | ComparisonBrief | WatchlistResponse;
+// ── Portfolio (schemas/portfolio.py, store/portfolio_store.py) ──────────────
+
+export interface PortfolioHolding {
+  ticker: string;
+  shares: number;
+  cost_basis?: number | null;
+  added_at: string;
+}
+
+export interface PortfolioResponse {
+  portfolio: PortfolioHolding[];
+}
+
+export interface PortfolioOptimizeRequest {
+  risk_aversion?: number;
+  market_impact_coeff?: number;
+  short_borrow_rate?: number;
+  max_position_weight?: number;
+  allow_short?: boolean;
+}
+
+export interface TradeRecommendation {
+  ticker: string;
+  current_weight: number;
+  target_weight: number;
+  trade_weight: number;
+  action: "buy" | "sell" | "hold";
+  est_market_impact_cost: number;
+  est_holding_cost: number;
+}
+
+export interface PortfolioOptimizationResult {
+  as_of_date: string;
+  tickers: string[];
+  expected_annual_return: number;
+  expected_annual_volatility: number;
+  total_est_cost: number;
+  trades: TradeRecommendation[];
+  notes: string[];
+}
+
+// /api/query's four possible shapes, discriminated by an explicit
+// `result_type` field the backend adds only on this endpoint's responses
+// (server.py's stock_query()) — not part of ResearchBrief/ComparisonBrief's
+// own schemas, which stay unchanged for /api/stock-research and
+// /api/stock-compare. Switch on `result_type`, not on which fields happen
+// to be present (see StockPanel.tsx's queryResultType()).
+export type QueryResponse =
+  | ClarificationResponse
+  | (ResearchBrief & { result_type: "research_brief" })
+  | (ComparisonBrief & { result_type: "comparison_brief" })
+  | WatchlistResponse;
 
 // ── Document Insights (schemas/document_insights.py) ────────────────────────
 

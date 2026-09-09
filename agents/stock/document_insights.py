@@ -22,12 +22,11 @@ since it's just formatting already-structured, already-cited data.
 """
 
 import difflib
-import json
 import logging
 from pathlib import Path
 from typing import Optional
 
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from agents.stock.xbrl_fallback import XBRLFallbackAgent
 from schemas.document_insights import (
     DocumentCitation,
@@ -88,16 +87,26 @@ def _find_best_span(page: ParsedPage, quote: str) -> tuple[list[ParsedTextItem],
             return [item], 1.0
 
     # Otherwise slide a window of consecutive items and fuzzy-match the
-    # concatenation against the quote.
+    # concatenation against the quote. Each window is built by extending the
+    # previous size's normalized text by one item, instead of re-joining and
+    # re-normalizing every item in the window from scratch each time — that
+    # re-normalization was the O(window_size) cost repeated for every
+    # (start, size) pair, i.e. O(n * MAX_SPAN_WINDOW^2) on a densely
+    # tokenized page. Building incrementally makes it O(n * MAX_SPAN_WINDOW).
+    # (`_normalize(" ".join(texts))` and `" ".join(_normalize(t) for t in texts)`
+    # produce identical output — _normalize already collapses all whitespace,
+    # so pre-normalizing each item before joining doesn't change the result.)
     best_items: list[ParsedTextItem] = []
     best_ratio = 0.0
     max_window = min(len(items), MAX_SPAN_WINDOW)
     for start in range(len(items)):
+        window_text = ""
         for size in range(1, max_window + 1):
             end = start + size
             if end > len(items):
                 break
-            window_text = _normalize(" ".join(it.text for it in items[start:end]))
+            piece = _normalize(items[end - 1].text)
+            window_text = f"{window_text} {piece}" if window_text else piece
             ratio = difflib.SequenceMatcher(None, norm_quote, window_text).ratio()
             if ratio > best_ratio:
                 best_ratio = ratio
@@ -195,34 +204,20 @@ class DocumentInsightsAgent:
         doc_name = document_name or Path(pdf_path).name
 
         if not liteparse.is_available():
-            fallback = self._try_xbrl_fallback(ticker)
-            if fallback:
-                return fallback
-            return DocumentInsightAnswer(
-                ticker=ticker, document_name=doc_name,
-                summary="LiteParse CLI is not installed — run `npm install` in tools/liteparse/.",
-                citations=[],
+            return self._fallback_or_error(
+                ticker, doc_name,
+                "LiteParse CLI is not installed — run `npm install` in tools/liteparse/.",
             )
 
         try:
             doc: ParsedDocument = liteparse.parse_pdf(pdf_path, max_pages=max_pages)
         except Exception as e:
             logger.warning(f"LiteParse failed for {pdf_path}: {e}")
-            fallback = self._try_xbrl_fallback(ticker)
-            if fallback:
-                return fallback
-            return DocumentInsightAnswer(
-                ticker=ticker, document_name=doc_name,
-                summary=f"Could not parse this document: {e}", citations=[],
-            )
+            return self._fallback_or_error(ticker, doc_name, f"Could not parse this document: {e}")
 
         if not doc.pages or not any(p.text.strip() for p in doc.pages):
-            fallback = self._try_xbrl_fallback(ticker)
-            if fallback:
-                return fallback
-            return DocumentInsightAnswer(
-                ticker=ticker, document_name=doc_name,
-                summary="Could not extract any text from this document.", citations=[],
+            return self._fallback_or_error(
+                ticker, doc_name, "Could not extract any text from this document."
             )
 
         if self.verbose:
@@ -234,19 +229,33 @@ class DocumentInsightsAgent:
             max_tokens=1200,
         )
 
-        try:
-            data = json.loads(raw)
-            citations = self._build_citations(doc, doc_name, data.get("citations", []))
-            return DocumentInsightAnswer(
+        return parse_llm_json(
+            raw, "DocumentInsights",
+            builder=lambda data: DocumentInsightAnswer(
                 ticker=ticker, document_name=doc_name,
-                summary=data.get("summary", ""), citations=citations,
-            )
-        except Exception as e:
-            logger.warning(f"DocumentInsights JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return DocumentInsightAnswer(
+                summary=data.get("summary", ""),
+                citations=self._build_citations(doc, doc_name, data.get("citations", [])),
+            ),
+            fallback=lambda: DocumentInsightAnswer(
                 ticker=ticker, document_name=doc_name,
                 summary=raw.strip() or "Unable to summarize this document.", citations=[],
-            )
+            ),
+        )
+
+    def _fallback_or_error(
+        self, ticker: str, doc_name: str, error_summary: str
+    ) -> DocumentInsightAnswer:
+        """Try the XBRL fallback (§ module docstring); if it can't help either,
+        return the plain error message. Shared by all three ways summarize()
+        can fail before ever calling the LLM (LiteParse missing, LiteParse
+        raised, or LiteParse returned no text) — they previously each
+        hand-copied this same try-fallback-else-error shape."""
+        fallback = self._try_xbrl_fallback(ticker)
+        if fallback:
+            return fallback
+        return DocumentInsightAnswer(
+            ticker=ticker, document_name=doc_name, summary=error_summary, citations=[]
+        )
 
     def _try_xbrl_fallback(self, ticker: str) -> Optional[DocumentInsightAnswer]:
         """Attempt the XBRL fallback; returns None (never raises) if no

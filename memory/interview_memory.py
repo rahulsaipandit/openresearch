@@ -12,10 +12,16 @@ Layout (one directory per candidate):
     interview_memory/<candidate_id>/
         profile.md
         answer_bank/<entry_id>.md
+        answer_bank/<entry_id>_images/<image_id>.<ext>  (§2.1 — real files, not base64-in-frontmatter)
         topics/<topic_slug>.md              (derived, safe to regenerate)
         assessments/<timestamp>_<hash>.md   (append-only)
         questions/<timestamp>_<hash>.md      (append-only)
         graph.json
+
+Live-question images (§2.1, a candidate's screenshot sent with /v1/interview/answer)
+are deliberately NOT persisted here — they're ephemeral, passed straight to the
+LLM for that one answer via LiveInterviewCoachSkill, and discarded. Only images
+attached to a saved AnswerBankEntry are stored long-term.
 
 This is a separate system from store/skills_store.py (the existing
 single-user SM-2 tracker) and schemas/interview.py (pre-interview JD/resume
@@ -23,8 +29,10 @@ research) — see docs/openresearch-integration-requirements.md §6.1 for why
 those are not being merged.
 """
 
+import base64
 import logging
 import re
+import shutil
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +45,7 @@ from memory.markdown_frontmatter import read_markdown_file, write_markdown_file
 from schemas.interview_memory import (
     Assessment,
     AnswerBankEntry,
+    ImageAttachment,
     InterviewProfile,
     MatchedSource,
     QuestionRecord,
@@ -53,6 +62,18 @@ _DEFAULT_BASE_DIR = Path("data") / "interview_memory"
 # is an approximate threshold to tune once real answer-bank content exists,
 # not a precise Shannon-limit-style guarantee.
 _ANSWER_BANK_DEDUP_DISTANCE = 0.08
+
+_MEDIA_TYPE_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+
+
+def _ext_for_media_type(media_type: str) -> str:
+    return _MEDIA_TYPE_EXT.get(media_type.lower(), "bin")
 
 
 def _slugify(text: str) -> str:
@@ -97,6 +118,13 @@ class InterviewMemoryStore:
         self.graph = CandidateGraph(self.root / "graph.json")
         self.vector_store = vector_store
         self._lock = threading.Lock()
+        # entry_id -> ImageAttachment list. InterviewMemoryStore instances are
+        # long-lived per candidate (cached in server.py), and this class is
+        # the only writer of answer_bank/<id>_images/, so it can safely own
+        # this cache — avoids re-reading + re-base64-encoding every attached
+        # image on every /v1/interview/answer request that retrieves the
+        # entry (a real cost directly in the §2 latency path otherwise).
+        self._image_cache: dict[str, list[ImageAttachment]] = {}
 
     # ── Profile ──────────────────────────────────────────────────────────────
 
@@ -128,12 +156,44 @@ class InterviewMemoryStore:
     def _answer_bank_path(self, entry_id: str) -> Path:
         return self.answer_bank_dir / f"{entry_id}.md"
 
+    def _answer_bank_images_dir(self, entry_id: str) -> Path:
+        return self.answer_bank_dir / f"{entry_id}_images"
+
     def add_answer_bank_entry(self, entry: AnswerBankEntry) -> AnswerBankEntry:
+        """Images (§2.1) are decoded and written as real files under
+        <entry_id>_images/, not kept as base64 in the frontmatter — a
+        multi-hundred-KB base64 blob inline in the markdown would defeat the
+        "human-readable, inspectable" point of storing this as markdown at
+        all (§6.1/§5.5). Frontmatter only carries filename/media_type/caption;
+        get_answer_bank_entry() re-reads and re-encodes the files on the way out.
+
+        Every image is base64-decoded up front, before any file is touched —
+        a malformed image on an update request must not destroy the entry's
+        previous, still-valid image set, and a malformed image partway
+        through a multi-image entry must not leave earlier images orphaned
+        on disk with no corresponding markdown file (both were real bugs in
+        an earlier version that wrote-as-it-decoded)."""
         with self._lock:
             now = _now_iso()
             entry.candidate_id = self.candidate_id
             entry.created_at = entry.created_at or now
             entry.updated_at = now
+
+            decoded_images = [(img, base64.b64decode(img.data)) for img in entry.images]
+
+            images_dir = self._answer_bank_images_dir(entry.id)
+            if images_dir.exists():
+                shutil.rmtree(images_dir)  # re-write path (update) — replace the prior image set
+            image_meta = []
+            if decoded_images:
+                images_dir.mkdir(parents=True, exist_ok=True)
+                for img, raw_bytes in decoded_images:
+                    filename = f"{uuid.uuid4().hex[:8]}.{_ext_for_media_type(img.media_type)}"
+                    (images_dir / filename).write_bytes(raw_bytes)
+                    image_meta.append(
+                        {"filename": filename, "media_type": img.media_type, "caption": img.caption}
+                    )
+
             write_markdown_file(
                 self._answer_bank_path(entry.id),
                 {
@@ -141,28 +201,53 @@ class InterviewMemoryStore:
                     "title": entry.title,
                     "category": entry.category,
                     "tags": entry.tags,
+                    "images": image_meta,
                     "created_at": entry.created_at,
                     "updated_at": entry.updated_at,
                 },
                 entry.content,
             )
             if self.vector_store:
-                # content only, not title+content — must match the text
-                # find_near_duplicate_answer_bank_entry() embeds for dedup
-                # to be comparing like with like.
+                # content only, not title+content, not image captions — must
+                # match exactly what find_near_duplicate_answer_bank_entry()
+                # embeds for dedup, or the two silently drift out of sync
+                # (this was a real bug once already — see git history).
                 self.vector_store.upsert(
                     doc_id=f"answer_bank:{self.candidate_id}:{entry.id}",
                     text=entry.content,
                     candidate_id=self.candidate_id,
                     doc_type="answer_bank",
                 )
+            # We already have the decoded images in hand — cache them now
+            # instead of making the very next read re-decode them from disk.
+            self._image_cache[entry.id] = list(entry.images)
             return entry
+
+    def _load_answer_bank_images(self, entry_id: str, frontmatter: dict) -> list[ImageAttachment]:
+        if entry_id in self._image_cache:
+            return self._image_cache[entry_id]
+        images_dir = self._answer_bank_images_dir(entry_id)
+        images = []
+        for meta in frontmatter.get("images", []):
+            img_path = images_dir / meta.get("filename", "")
+            if not img_path.exists():
+                continue
+            images.append(
+                ImageAttachment(
+                    media_type=meta.get("media_type", "application/octet-stream"),
+                    data=base64.b64encode(img_path.read_bytes()).decode("utf-8"),
+                    caption=meta.get("caption"),
+                )
+            )
+        self._image_cache[entry_id] = images
+        return images
 
     def get_answer_bank_entry(self, entry_id: str) -> Optional[AnswerBankEntry]:
         path = self._answer_bank_path(entry_id)
         if not path.exists():
             return None
         frontmatter, body = read_markdown_file(path)
+        images = self._load_answer_bank_images(entry_id, frontmatter)
         return AnswerBankEntry(
             id=frontmatter.get("id", entry_id),
             candidate_id=self.candidate_id,
@@ -170,6 +255,7 @@ class InterviewMemoryStore:
             content=body,
             category=frontmatter.get("category", "talking_point"),
             tags=frontmatter.get("tags", []),
+            images=images,
             created_at=frontmatter.get("created_at", ""),
             updated_at=frontmatter.get("updated_at", ""),
         )
@@ -188,6 +274,10 @@ class InterviewMemoryStore:
             if not path.exists():
                 return False
             path.unlink()
+            images_dir = self._answer_bank_images_dir(entry_id)
+            if images_dir.exists():
+                shutil.rmtree(images_dir)
+            self._image_cache.pop(entry_id, None)
             if self.vector_store:
                 self.vector_store.delete(f"answer_bank:{self.candidate_id}:{entry_id}")
             self.graph.remove_node(entry_id)
@@ -224,7 +314,10 @@ class InterviewMemoryStore:
                     "session_id": record.session_id,
                     "topic": record.topic,
                     "judge_score": record.judge_score,
-                    "matched_sources": [m.model_dump() for m in record.matched_sources],
+                    # exclude images — they're already stored under the answer-bank
+                    # entry's own <id>_images/ dir; embedding base64 here would
+                    # repeat it per question and bloat every question's frontmatter.
+                    "matched_sources": [m.model_dump(exclude={"images"}) for m in record.matched_sources],
                     "timestamp": record.timestamp,
                     "ease_factor": record.ease_factor,
                     "interval_days": record.interval_days,

@@ -57,18 +57,17 @@ class ResearchPrimerPipeline:
         if self.verbose:
             print(f"\n[PrimerPipeline] Building research primer for {ticker}...")
             print("  [1/6] Running baseline stock research pipeline...")
-        brief = self.stock_pipeline.run(StockPipelineInput(ticker=ticker, depth=request.depth))
+        # run_with_raw_data(), not run() + a second fetch — the stock pipeline
+        # already pulled price/financials/news internally; re-fetching them
+        # here used to double every yfinance/news-API/Equibles round trip for
+        # no new data.
+        brief, raw_data, news_data = self.stock_pipeline.run_with_raw_data(
+            StockPipelineInput(ticker=ticker, depth=request.depth)
+        )
 
         if self.verbose:
             print("  [2/6] Fetching five-year trend data...")
         trend = self.trend_analyst.fetch(ticker)
-
-        # Re-fetch the raw price/financials/news the stock pipeline already pulled,
-        # so BusinessFoundation has real source material without a second full fetch.
-        raw_data = self.stock_pipeline.data_fetcher.fetch(ticker, depth=request.depth)
-        news_data = self.stock_pipeline.news_aggregator.fetch(
-            ticker, company_name=brief.company_name, depth=request.depth
-        )
 
         if self.verbose:
             print("  [3/6] Writing business foundation...")

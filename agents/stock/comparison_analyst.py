@@ -7,14 +7,9 @@ category comparison (requirement #3: side-by-side comparison showing where
 each stock excels).
 """
 
-import json
-import logging
-
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from schemas.comparison import ComparisonBrief, ComparisonVerdict
 from schemas.stock import ResearchBrief
-
-logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a buy-side analyst comparing two stocks side by side.
 You are given two structured research briefs. Compare them across Fundamentals,
@@ -48,8 +43,7 @@ class ComparisonAnalystAgent:
             messages=[{"role": "user", "content": self._build_prompt(brief_a, brief_b)}],
             max_tokens=1200,
         )
-        try:
-            data = json.loads(raw)
+        def _build(data: dict) -> ComparisonBrief:
             return ComparisonBrief(
                 ticker_a=brief_a.ticker,
                 ticker_b=brief_b.ticker,
@@ -59,9 +53,12 @@ class ComparisonAnalystAgent:
                 brief_a=brief_a,
                 brief_b=brief_b,
             )
-        except Exception as e:
-            logger.warning(f"ComparisonAnalyst JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return self._fallback(brief_a, brief_b)
+
+        return parse_llm_json(
+            raw, "ComparisonAnalyst",
+            builder=_build,
+            fallback=lambda: self._fallback(brief_a, brief_b),
+        )
 
     def _build_prompt(self, a: ResearchBrief, b: ResearchBrief) -> str:
         def fmt(brief: ResearchBrief) -> str:

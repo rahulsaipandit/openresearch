@@ -7,15 +7,10 @@ sec-insights reference app's citation pattern, without its Postgres+PGVector
 infra — see requirements.md for that scoping decision.
 """
 
-import json
-import logging
-
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from agents.stock.sec_ingest import SECIngestAgent
 from schemas.sec_insights import SECAnswer, SECCitation
 from store.sec_vector_store import SECVectorStore
-
-logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are answering a question about a company's SEC filings using ONLY \
 the filing excerpts provided below. If the excerpts don't contain the answer, say so \
@@ -72,18 +67,19 @@ class SECQAAgent:
             max_tokens=800,
         )
 
-        try:
-            data = json.loads(raw)
+        def _build(data: dict) -> SECAnswer:
             used = set(data.get("used_excerpts", []))
             citations = self._build_citations(documents, metadatas, used)
             return SECAnswer(ticker=ticker, question=question, answer=data.get("answer", ""), citations=citations)
-        except Exception as e:
-            logger.warning(f"SECQA JSON parse failed: {e}\nRaw: {raw[:300]}")
+
+        def _fallback() -> SECAnswer:
             citations = self._build_citations(documents, metadatas, used=None)
             return SECAnswer(
                 ticker=ticker, question=question,
                 answer=raw.strip() or "Unable to generate an answer.", citations=citations,
             )
+
+        return parse_llm_json(raw, "SECQA", builder=_build, fallback=_fallback)
 
     def _build_prompt(self, question: str, documents: list[str], metadatas: list[dict]) -> str:
         lines = [f"Question: {question}", "", "Excerpts:"]
@@ -96,7 +92,12 @@ class SECQAAgent:
     def _build_citations(self, documents: list[str], metadatas: list[dict], used: set | None) -> list[SECCitation]:
         citations = []
         for i, (doc, meta) in enumerate(zip(documents, metadatas), start=1):
-            if used is not None and used and i not in used:
+            # NOTE: must not be `used is not None and used and ...` — an
+            # empty set is falsy in Python, so that would treat "the model
+            # explicitly cited nothing" the same as "no filter", silently
+            # including every excerpt as if it had been cited. `used=None`
+            # (the JSON-parse-failure fallback) is the only "no filter" case.
+            if used is not None and i not in used:
                 continue
             citations.append(SECCitation(
                 filing_type=meta.get("filing_type", ""),

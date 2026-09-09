@@ -39,7 +39,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import uvicorn
 import yaml
@@ -299,7 +299,7 @@ class StockResearchRequest(BaseModel):
 
 class StockPrimerRequest(BaseModel):
     ticker: str
-    depth: str = "full"
+    depth: Literal["quick", "full"] = "full"
 
 
 class SECInsightsRequest(BaseModel):
@@ -661,15 +661,27 @@ def stock_query(request: StockQueryRequest):
     if _stock_pipeline is None:
         raise HTTPException(503, "Stock pipeline not initialized. Check config.yaml.")
 
+    # /api/query can return one of four structurally different shapes
+    # (clarification / research brief / comparison brief / watchlist), and
+    # the frontend used to tell them apart by duck-typing on which fields
+    # happened to be present (e.g. "has a string `ticker` and `verdict`").
+    # That's fragile — a future field rename/addition could produce a false
+    # match. Every branch now carries an explicit `result_type` string the
+    # frontend switches on instead (see desktop/src/types.ts's QueryResponse).
     result: QueryRouterResult = _query_router.route(request.query)
 
     if result.clarification_needed:
-        return {"clarification_needed": True, "message": result.clarification_question}
+        return {
+            "result_type": "clarification",
+            "clarification_needed": True,
+            "message": result.clarification_question,
+        }
 
     depth = request.depth or result.depth
 
     if result.intent == "comparison" and len(result.resolved) >= 2:
-        return _run_comparison(result.resolved[0].ticker, result.resolved[1].ticker, depth)
+        comparison = _run_comparison(result.resolved[0].ticker, result.resolved[1].ticker, depth)
+        return {**comparison.model_dump(), "result_type": "comparison_brief"}
 
     if result.intent == "watchlist_add" and result.resolved:
         if _watchlist_store is None:
@@ -678,10 +690,11 @@ def stock_query(request: StockQueryRequest):
             items = _watchlist_store.add(result.resolved[0].ticker)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        return {"watchlist": [i.model_dump() for i in items]}
+        return {"result_type": "watchlist", "watchlist": [i.model_dump() for i in items]}
 
     if not result.resolved:
         return {
+            "result_type": "clarification",
             "clarification_needed": True,
             "message": "I couldn't resolve a ticker to analyze — could you name the company or ticker directly?",
         }
@@ -692,7 +705,7 @@ def stock_query(request: StockQueryRequest):
     except Exception as e:
         logger.error(f"Query-routed stock research failed for {ticker}: {e}", exc_info=True)
         raise HTTPException(500, f"Research pipeline error: {str(e)[:200]}")
-    return brief
+    return {**brief.model_dump(), "result_type": "research_brief"}
 
 
 @app.post("/api/board-session")
@@ -1403,6 +1416,7 @@ def interview_answer(request: AnswerRequest):
             session_id=request.session_id,
             conversation_history=request.conversation_history,
             answer_style=request.answer_style,
+            images=request.images,
         )
     except Exception as e:
         logger.error(f"live_interview_coach.apply failed: {e}")
@@ -1414,7 +1428,13 @@ def interview_answer(request: AnswerRequest):
         final = {
             "answer_chunk": "",
             "done": True,
-            "metadata": {"matched_sources": [m.model_dump() for m in result.matched_sources]},
+            "metadata": {
+                "matched_sources": [m.model_dump() for m in result.matched_sources],
+                # true if the candidate sent an image but the configured LLM
+                # couldn't use it (§2.1) — Pluely should tell the candidate
+                # their screenshot was dropped rather than silently ignore it.
+                "images_ignored": result.images_ignored,
+            },
         }
         yield f"data: {json.dumps(final)}\n\n"
 

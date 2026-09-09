@@ -16,8 +16,10 @@ the full-period numbers rather than being fit and tested on the same window.
 """
 
 import logging
+from datetime import timedelta
 
 import numpy as np
+import pandas as pd
 import yfinance as yf
 
 from schemas.stock import BacktestResult, SignalSet
@@ -87,11 +89,17 @@ class BacktestEngine:
             elif action == "sell":
                 is_long = False
             position.append(1.0 if is_long else 0.0)
-        return hist["Close"].copy() * 0 + position  # same index/dtype as a price-derived series
+        return pd.Series(position, index=hist.index)
 
     def _benchmark_returns(self, benchmark_ticker: str, index):
         try:
-            bench = yf.Ticker(benchmark_ticker).history(start=index[0], end=index[-1])
+            # yfinance's `end` is exclusive — without the +1 day, the benchmark
+            # series is missing the final trading day that `hist` (the
+            # strategy's own price history) includes, understating benchmark
+            # returns relative to the strategy, especially over short windows.
+            bench = yf.Ticker(benchmark_ticker).history(
+                start=index[0], end=index[-1] + timedelta(days=1)
+            )
             if bench.empty:
                 return None
             return bench["Close"].pct_change().fillna(0.0)

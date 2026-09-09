@@ -103,6 +103,20 @@ class StockResearchPipeline:
         )
 
     def run(self, request: StockPipelineInput) -> ResearchBrief:
+        brief, _raw_data, _news_data = self._run_impl(request)
+        return brief
+
+    def run_with_raw_data(
+        self, request: StockPipelineInput
+    ) -> tuple[ResearchBrief, dict, dict]:
+        """Like run(), but also returns the raw price/financials/news data
+        this pipeline already fetched internally — for callers (e.g.
+        ResearchPrimerPipeline) that need that same source material without
+        triggering a second, identical fetch (yfinance/news-API/Equibles
+        round trips a second time for no new data)."""
+        return self._run_impl(request)
+
+    def _run_impl(self, request: StockPipelineInput) -> tuple[ResearchBrief, dict, dict]:
         ticker = request.ticker.upper().strip()
         depth  = request.depth
 
@@ -182,4 +196,4 @@ class StockResearchPipeline:
                   f"Target: ${brief.price_target_low:.0f}–${brief.price_target_high:.0f}"
                   f"{equibles_status}")
 
-        return brief
+        return brief, raw_data, news_data

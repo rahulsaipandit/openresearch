@@ -15,12 +15,24 @@ Same SM-2 algorithm as store/skills_store.py (SuperMemo SM-2, Woźniak 1987):
   quality 3-5 = correct recall → advance interval using EF
 """
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from agents.interview.skills.base import Skill
 from memory.interview_memory import InterviewMemoryStore
 from schemas.interview_memory import QuestionRecord
+
+# QuestionRecord timestamps (memory/interview_memory.py's _now_iso()) are all
+# UTC. Comparing them against date.today() (the system's LOCAL date) is a
+# real bug — a candidate west of UTC can have a question's next_review_date
+# land "tomorrow" in UTC while it's still "today" locally, so a
+# just-recorded question fails to show up as due until the local date
+# catches up. All date arithmetic here uses UTC to stay consistent with how
+# the dates were written.
+
+
+def _today_utc() -> date:
+    return datetime.now(timezone.utc).date()
 
 
 def _sm2(ef: float, interval: int, reps: int, quality: int) -> tuple[float, int, int]:
@@ -56,7 +68,7 @@ class PreInterviewDrillSkill(Skill):
     def due_today(
         self, memory: InterviewMemoryStore, as_of_date: Optional[str] = None
     ) -> list[dict]:
-        today = date.fromisoformat(as_of_date) if as_of_date else date.today()
+        today = date.fromisoformat(as_of_date) if as_of_date else _today_utc()
         due: list[dict] = []
         for record in memory.list_questions():
             review_date = (
@@ -93,8 +105,8 @@ class PreInterviewDrillSkill(Skill):
         record.ease_factor = new_ef
         record.interval_days = new_interval
         record.repetitions = new_reps
-        record.next_review_date = (date.today() + timedelta(days=new_interval)).isoformat()
-        record.last_reviewed = date.today().isoformat()
+        record.next_review_date = (_today_utc() + timedelta(days=new_interval)).isoformat()
+        record.last_reviewed = _today_utc().isoformat()
         record.last_quality = quality
 
         memory.update_question_drill_state(record)

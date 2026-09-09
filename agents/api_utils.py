@@ -24,13 +24,43 @@ Rate limits:
     If all providers are exhausted, re-raises the last error.
 """
 
+import json
 import logging
 import time
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES   = 4   # retries per provider before falling back to next
+
+T = TypeVar("T")
+
+
+def parse_llm_json(
+    raw: str,
+    agent_name: str,
+    builder: Callable[[dict], T],
+    fallback: Callable[[], T],
+) -> T:
+    """
+    Shared "call an LLM, parse its JSON, build a typed result" pattern —
+    previously hand-copied (with an identical log line, differing only in
+    agent_name) across ~7 stock agents: adversarial_review, business_foundation,
+    comparison_analyst, driver_debate, query_router, sec_qa, document_insights.
+
+    `builder` does whatever construction that call site needs from the parsed
+    dict (a plain `Model(**data)`, or something that pulls specific fields and
+    validates nested lists) — any exception it raises (malformed JSON, a
+    missing required field, a nested Pydantic validation error) is caught the
+    same way a bad json.loads() would be, logs one consistent warning, and
+    calls `fallback()` instead of propagating.
+    """
+    try:
+        data = json.loads(raw)
+        return builder(data)
+    except Exception as e:
+        logger.warning(f"{agent_name} JSON parse failed: {e}\nRaw: {raw[:300]}")
+        return fallback()
 
 
 # ── Token budget ───────────────────────────────────────────────────────────────
@@ -267,23 +297,27 @@ class _Backend:
             raise ValueError(f"Unknown LLM provider '{provider}'. Use 'anthropic', 'openai', 'openai_compatible', or 'minimax'.")
 
     def call(self, system: str, messages: list[dict], max_tokens: int,
-             verbose: bool = False) -> str:
+             verbose: bool = False, images: Optional[list[dict]] = None) -> str:
         """
         Make a single API call with exponential back-off on rate limit.
         Raises the RateLimitError after MAX_RETRIES so the caller can try
         the next backend.
+
+        images: optional list of {"media_type": str, "data": base64 str}
+        attached to the last message in `messages`. Only meaningful via
+        LLMClient.create_multimodal() — plain create() never passes this.
         """
         wait = BASE_WAIT_SEC
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 if self.provider == "anthropic":
-                    return self._call_anthropic(system, messages, max_tokens)
+                    return self._call_anthropic(system, messages, max_tokens, images)
                 elif self.provider == "minimax":
-                    return self._call_minimax(system, messages, max_tokens)
+                    return self._call_minimax(system, messages, max_tokens, images)
                 elif self.provider == "openai_compatible":
-                    return self._call_openai_compatible(system, messages, max_tokens)
+                    return self._call_openai_compatible(system, messages, max_tokens, images)
                 else:
-                    return self._call_openai(system, messages, max_tokens)
+                    return self._call_openai(system, messages, max_tokens, images)
 
             except Exception as e:
                 if not isinstance(e, self._rate_limit_exc):
@@ -302,7 +336,28 @@ class _Backend:
                 time.sleep(sleep_sec)
                 wait = min(wait * 2, 300)
 
-    def _call_anthropic(self, system: str, messages: list[dict], max_tokens: int) -> str:
+    @staticmethod
+    def _attach_images(messages: list[dict], images: Optional[list[dict]], image_block) -> list[dict]:
+        """Rebuild the last message's content as [image blocks..., text block] —
+        images attach to whatever the caller's current turn is. No-op if
+        images is empty/None, so every existing plain-text call site is
+        unaffected."""
+        if not images:
+            return messages
+        last = messages[-1]
+        blocks = [image_block(img) for img in images]
+        blocks.append({"type": "text", "text": last["content"]})
+        return [*messages[:-1], {**last, "content": blocks}]
+
+    def _call_anthropic(self, system: str, messages: list[dict], max_tokens: int,
+                         images: Optional[list[dict]] = None) -> str:
+        messages = self._attach_images(
+            messages, images,
+            lambda img: {
+                "type": "image",
+                "source": {"type": "base64", "media_type": img["media_type"], "data": img["data"]},
+            },
+        )
         resp = self._client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -317,7 +372,16 @@ class _Backend:
     def _uses_developer_role(self) -> bool:
         return any(self.model.startswith(p) for p in self._DEVELOPER_ROLE_MODELS)
 
-    def _call_openai(self, system: str, messages: list[dict], max_tokens: int) -> str:
+    @staticmethod
+    def _openai_image_block(img: dict) -> dict:
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{img['media_type']};base64,{img['data']}"},
+        }
+
+    def _call_openai(self, system: str, messages: list[dict], max_tokens: int,
+                      images: Optional[list[dict]] = None) -> str:
+        messages = self._attach_images(messages, images, self._openai_image_block)
         system_role = "developer" if self._uses_developer_role() else "system"
         kwargs = dict(
             model=self.model,
@@ -349,8 +413,14 @@ class _Backend:
             )
         return content
 
-    def _call_openai_compatible(self, system: str, messages: list[dict], max_tokens: int) -> str:
-        """Call a local OpenAI-compatible server (LM Studio, Ollama, etc.)."""
+    def _call_openai_compatible(self, system: str, messages: list[dict], max_tokens: int,
+                                 images: Optional[list[dict]] = None) -> str:
+        """Call a local OpenAI-compatible server (LM Studio, Ollama, etc.).
+
+        Vision support depends entirely on whichever model is loaded locally —
+        if it doesn't accept image content blocks, the call raises and
+        LLMClient.create_multimodal() falls back to text-only (§2.1)."""
+        messages = self._attach_images(messages, images, self._openai_image_block)
         resp = self._client.chat.completions.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -364,13 +434,18 @@ class _Backend:
             )
         return content
 
-    def _call_minimax(self, system: str, messages: list[dict], max_tokens: int) -> str:
+    def _call_minimax(self, system: str, messages: list[dict], max_tokens: int,
+                       images: Optional[list[dict]] = None) -> str:
         """Call MiniMax via its OpenAI-compatible API.
 
         Key differences from vanilla OpenAI:
         - temperature must be in (0.0, 1.0] — zero is not accepted
         - uses 'system' role (no 'developer' role)
+        - no vision support in this client — raises so create_multimodal()
+          treats it the same as any other backend that can't handle images.
         """
+        if images:
+            raise ValueError("MiniMax backend does not support image input in this client.")
         resp = self._client.chat.completions.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -507,6 +582,55 @@ class LLMClient:
 
         # All backends exhausted
         raise last_error
+
+    def create_multimodal(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int,
+        images: Optional[list[dict]] = None,
+        verbose: bool = False,
+    ) -> tuple[str, bool]:
+        """
+        Like create(), but accepts images attached to the last message
+        (list of {"media_type": str, "data": base64 str}).
+
+        Graceful degradation (docs/openresearch-integration-requirements.md
+        §2.1): not every configured backend supports vision — a local model
+        via openai_compatible in particular may not. Each backend is tried
+        WITH the images first; if every one fails on the image-bearing call,
+        this falls back to the plain text-only chain via create() rather than
+        erroring, since a candidate's screenshot being unusable shouldn't
+        break the whole answer. Returns (answer_text, images_were_used) so
+        the caller can tell the candidate their image was dropped instead of
+        silently losing it.
+
+        Rate-limit handling matches create() (retries within a backend, falls
+        through the chain); any other failure on the vision call is treated
+        as "this backend can't do vision" and also falls through the chain,
+        which is the one behavioral difference from create()'s "non-rate-limit
+        errors propagate immediately" — expected here, since an unsupported-
+        content-type error from a text-only local model is a normal outcome,
+        not a bug to surface.
+        """
+        if not images:
+            return self.create(system, messages, max_tokens, verbose), False
+
+        for backend in self._backends:
+            try:
+                return backend.call(system, messages, max_tokens, verbose, images=images), True
+            except Exception as e:
+                if verbose:
+                    print(f"\n  ⚠️  [{backend.provider}/{backend.model}] vision call failed "
+                          f"({e}) — trying next backend...")
+                continue
+
+        # No backend could use the image — fall back to text-only, and tell
+        # the caller so it can surface that to the candidate.
+        if verbose:
+            print("\n  ⚠️  No configured backend could use the attached image(s) — "
+                  "answering from text only.")
+        return self.create(system, messages, max_tokens, verbose), False
 
 
 # ── Legacy shim ────────────────────────────────────────────────────────────────

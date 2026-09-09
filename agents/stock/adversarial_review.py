@@ -9,14 +9,9 @@ Review — Reconciliations, Integrated Bear Case, Numeric Audit" chapter of
 institutional research primers.
 """
 
-import json
-import logging
-
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from schemas.primer import AdversarialReview, DebateItem, DriverTreeItem
 from schemas.stock import ResearchBrief
-
-logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a skeptical senior analyst whose job is to stress-test a \
 research brief before it goes to a portfolio manager. Build the single strongest, \
@@ -55,11 +50,11 @@ class AdversarialReviewAgent:
             messages=[{"role": "user", "content": self._build_prompt(brief, driver_tree, debate_map)}],
             max_tokens=1200,
         )
-        try:
-            return AdversarialReview(**json.loads(raw))
-        except Exception as e:
-            logger.warning(f"AdversarialReview JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return self._fallback(brief)
+        return parse_llm_json(
+            raw, "AdversarialReview",
+            builder=lambda data: AdversarialReview(**data),
+            fallback=lambda: self._fallback(brief),
+        )
 
     def _build_prompt(
         self, brief: ResearchBrief, driver_tree: list[DriverTreeItem], debate_map: list[DebateItem]

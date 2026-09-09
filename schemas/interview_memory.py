@@ -26,6 +26,21 @@ class AnswerStyle(BaseModel):
     depth: AnswerDepth = "balanced"
 
 
+class ImageAttachment(BaseModel):
+    """A single image, always carried as base64 over the wire.
+
+    Two distinct lifetimes use this same shape (§2.1):
+    - Inline on an AnswerRequest: a candidate's live screenshot, ephemeral —
+      passed to the model for that one answer, never persisted.
+    - On an AnswerBankEntry: a stored diagram/image that's part of a saved
+      story, persisted to disk (see InterviewMemoryStore) and echoed back in
+      MatchedSource.images whenever that entry grounds an answer.
+    """
+    media_type: str  # e.g. "image/png", "image/jpeg", "image/webp"
+    data: str         # base64-encoded image bytes
+    caption: Optional[str] = None
+
+
 class InterviewProfile(BaseModel):
     """Single active profile per candidate — replace-on-update, not versioned."""
     candidate_id: str
@@ -41,6 +56,7 @@ class AnswerBankEntry(BaseModel):
     content: str
     category: AnswerBankCategory
     tags: list[str] = Field(default_factory=list)
+    images: list[ImageAttachment] = Field(default_factory=list)
     created_at: str = ""
     updated_at: str = ""
 
@@ -52,6 +68,7 @@ class AnswerBankEntryCreate(BaseModel):
     content: str
     category: AnswerBankCategory = "talking_point"
     tags: list[str] = Field(default_factory=list)
+    images: list[ImageAttachment] = Field(default_factory=list)
 
 
 class SkillApplyRequest(BaseModel):
@@ -64,6 +81,7 @@ class MatchedSource(BaseModel):
     id: str
     title: str
     category: str
+    images: list[ImageAttachment] = Field(default_factory=list)
 
 
 class QuestionRecord(BaseModel):
@@ -136,6 +154,7 @@ class AnswerRequest(BaseModel):
     question: str
     conversation_history: list[dict] = Field(default_factory=list)
     answer_style: AnswerStyle = Field(default_factory=AnswerStyle)
+    images: list[ImageAttachment] = Field(default_factory=list)  # §2.1 — a live screenshot, ephemeral
 
 
 class AnswerResult(BaseModel):
@@ -144,3 +163,4 @@ class AnswerResult(BaseModel):
     matched_sources: list[MatchedSource] = Field(default_factory=list)
     topic: str = "uncategorized"
     question_record_id: str = ""
+    images_ignored: bool = False  # true if images were sent but the configured model couldn't use them

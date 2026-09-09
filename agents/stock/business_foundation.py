@@ -8,13 +8,8 @@ institutional research primers (see Initial_requirement_collection.md), but
 a single-pass LLM synthesis rather than a multi-source deep-dive investigation.
 """
 
-import json
-import logging
-
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from schemas.primer import BusinessFoundation
-
-logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an equity research associate writing the "Business Foundation" \
 section of an institutional research primer. Describe the company's business model, \
@@ -46,11 +41,11 @@ class BusinessFoundationAgent:
             messages=[{"role": "user", "content": self._build_prompt(ticker, price_data, financials, news_data)}],
             max_tokens=900,
         )
-        try:
-            return BusinessFoundation(**json.loads(raw))
-        except Exception as e:
-            logger.warning(f"BusinessFoundation JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return self._fallback(price_data)
+        return parse_llm_json(
+            raw, "BusinessFoundation",
+            builder=lambda data: BusinessFoundation(**data),
+            fallback=lambda: self._fallback(price_data),
+        )
 
     def _build_prompt(self, ticker: str, price_data: dict, financials: dict, news_data: dict) -> str:
         lines = [

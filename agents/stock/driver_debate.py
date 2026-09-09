@@ -9,14 +9,9 @@ institutional research primers, scoped to a single LLM pass rather than a
 per-unknown deep-dive investigation (see requirements.md scoping decision).
 """
 
-import json
-import logging
-
-from agents.api_utils import LLMClient
+from agents.api_utils import LLMClient, parse_llm_json
 from schemas.primer import DebateItem, DriverTreeItem
 from schemas.stock import ResearchBrief
-
-logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an equity research associate building a "driver tree" and \
 "debate map" for a stock. The driver tree lists the concrete factors that will move \
@@ -52,14 +47,16 @@ class DriverDebateAgent:
             messages=[{"role": "user", "content": self._build_prompt(brief)}],
             max_tokens=1200,
         )
-        try:
-            data = json.loads(raw)
+        def _build(data: dict) -> tuple[list[DriverTreeItem], list[DebateItem]]:
             drivers = [DriverTreeItem(**d) for d in data.get("driver_tree", [])]
             debates = [DebateItem(**d) for d in data.get("debate_map", [])]
             return drivers, debates
-        except Exception as e:
-            logger.warning(f"DriverDebate JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return self._fallback(brief)
+
+        return parse_llm_json(
+            raw, "DriverDebate",
+            builder=_build,
+            fallback=lambda: self._fallback(brief),
+        )
 
     def _build_prompt(self, brief: ResearchBrief) -> str:
         lines = [

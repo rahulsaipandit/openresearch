@@ -7,6 +7,9 @@ import type {
   ComparisonBrief,
   DocumentInsightAnswer,
   InterviewPrepBrief,
+  PortfolioOptimizationResult,
+  PortfolioOptimizeRequest,
+  PortfolioResponse,
   QueryResponse,
   RealEstateBrief,
   ResearchBrief,
@@ -106,6 +109,32 @@ export function removeFromWatchlist(ticker: string) {
 
 export function getHealth() {
   return request<{ status: string }>("/api/health");
+}
+
+// ── Portfolio ─────────────────────────────────────────────────────────────────
+
+export function getPortfolio() {
+  return request<PortfolioResponse>("/api/portfolio");
+}
+
+export function upsertPortfolioHolding(ticker: string, shares: number, costBasis?: number) {
+  return request<PortfolioResponse>("/api/portfolio", {
+    method: "POST",
+    body: JSON.stringify({ ticker, shares, cost_basis: costBasis }),
+  });
+}
+
+export function removePortfolioHolding(ticker: string) {
+  return request<PortfolioResponse>(`/api/portfolio/${encodeURIComponent(ticker)}`, {
+    method: "DELETE",
+  });
+}
+
+export function optimizePortfolio(options: PortfolioOptimizeRequest = {}) {
+  return request<PortfolioOptimizationResult>("/api/portfolio-optimize", {
+    method: "POST",
+    body: JSON.stringify(options),
+  });
 }
 
 // ── Other verticals — thin passthroughs, no stock-specific logic needed ────

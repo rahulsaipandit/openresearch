@@ -23,6 +23,7 @@ from schemas.interview_memory import (
     AnswerResult,
     AnswerStyle,
     Assessment,
+    ImageAttachment,
     MatchedSource,
     QuestionRecord,
     TopicSummary,
@@ -62,7 +63,17 @@ class LiveInterviewCoachSkill(Skill):
         session_id: str,
         conversation_history: Optional[list[dict]] = None,
         answer_style: Optional[AnswerStyle] = None,
+        images: Optional[list[ImageAttachment]] = None,
     ) -> AnswerResult:
+        """
+        images (§2.1): a candidate's live screenshot, e.g. a system-design
+        diagram or a coding problem on screen. Ephemeral — passed to the
+        model for this one answer and never persisted (see
+        memory/interview_memory.py's module docstring for why). If the
+        configured LLM can't use images (a local vision-incapable model),
+        create_multimodal() degrades gracefully to a text-only answer and
+        AnswerResult.images_ignored is set so the candidate can be told.
+        """
         answer_style = answer_style or AnswerStyle()
         conversation_history = conversation_history or []
         profile = memory.get_profile()
@@ -71,14 +82,18 @@ class LiveInterviewCoachSkill(Skill):
         system_prompt = self._build_system_prompt(profile, answer_style)
         user_prompt = self._build_user_prompt(context, conversation_history, question)
 
-        answer_text = self.llm.create(
+        image_payload = (
+            [{"media_type": img.media_type, "data": img.data} for img in images] if images else None
+        )
+        answer_text, images_used = self.llm.create_multimodal(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=700,
+            images=image_payload,
         )
 
         matched_sources = [
-            MatchedSource(id=e.id, title=e.title, category=e.category)
+            MatchedSource(id=e.id, title=e.title, category=e.category, images=e.images)
             for e in context.matched_answer_bank
         ]
         provisional_topic = context.topic_summary.topic if context.topic_summary else "uncategorized"
@@ -100,6 +115,7 @@ class LiveInterviewCoachSkill(Skill):
             matched_sources=matched_sources,
             topic=record.topic,
             question_record_id=record.id,
+            images_ignored=bool(images) and not images_used,
         )
 
     def judge_and_record(

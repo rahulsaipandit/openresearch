@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { runQuery } from "../api";
-import type { ClarificationResponse, ComparisonBrief, QueryResponse, ResearchBrief, WatchlistResponse } from "../types";
+import type { ClarificationResponse, QueryResponse, ResearchBrief } from "../types";
 import { CitedText } from "../components/CitedText";
 import { DataTable } from "../components/DataTable";
 import { WatchlistPanel } from "./WatchlistPanel";
+import { PortfolioPanel } from "./PortfolioPanel";
 import { ComparisonPanel } from "./ComparisonPanel";
 import { TrendPanel } from "./TrendPanel";
 import { PrimerPanel } from "./PrimerPanel";
@@ -11,14 +12,23 @@ import { SECInsightsPanel } from "./SECInsightsPanel";
 import { DocumentInsightsPanel } from "./DocumentInsightsPanel";
 import { DashboardPanel } from "./DashboardPanel";
 
-type SubTab = "research" | "dashboard" | "watchlist" | "compare" | "trend" | "primer" | "sec" | "documents";
+type SubTab =
+  | "research"
+  | "dashboard"
+  | "watchlist"
+  | "portfolio"
+  | "compare"
+  | "trend"
+  | "primer"
+  | "sec"
+  | "documents";
 
 function isClarification(r: QueryResponse): r is ClarificationResponse {
-  return (r as ClarificationResponse).clarification_needed === true;
+  return r.result_type === "clarification";
 }
 
-function isResearchBrief(r: QueryResponse): r is ResearchBrief {
-  return typeof (r as ResearchBrief).ticker === "string" && typeof (r as ResearchBrief).verdict === "string";
+function isResearchBrief(r: QueryResponse): r is ResearchBrief & { result_type: "research_brief" } {
+  return r.result_type === "research_brief";
 }
 
 // Single-shot query -> structured result view, per requirements.md's Query
@@ -45,13 +55,10 @@ export function StockPanel() {
         setClarification(res.message);
       } else if (isResearchBrief(res)) {
         setResult(res);
+      } else if (res.result_type === "watchlist") {
+        setClarification("Added to your watchlist — check the Watchlist tab.");
       } else {
-        const other = res as ComparisonBrief | WatchlistResponse;
-        if ("watchlist" in other) {
-          setClarification("Added to your watchlist — check the Watchlist tab.");
-        } else {
-          setClarification("This resolved to a comparison — check the Compare tab and re-run it there.");
-        }
+        setClarification("This resolved to a comparison — check the Compare tab and re-run it there.");
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -63,7 +70,9 @@ export function StockPanel() {
   return (
     <div className="panel">
       <div className="sub-nav no-print">
-        {(["research", "dashboard", "watchlist", "compare", "trend", "primer", "sec", "documents"] as SubTab[]).map((t) => (
+        {(
+          ["research", "dashboard", "watchlist", "portfolio", "compare", "trend", "primer", "sec", "documents"] as SubTab[]
+        ).map((t) => (
           <button key={t} type="button" className={subTab === t ? "active" : ""} onClick={() => setSubTab(t)}>
             {t === "sec" ? "SEC Insights" : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
@@ -93,6 +102,7 @@ export function StockPanel() {
 
       {subTab === "dashboard" && <DashboardPanel />}
       {subTab === "watchlist" && <WatchlistPanel />}
+      {subTab === "portfolio" && <PortfolioPanel />}
       {subTab === "compare" && <ComparisonPanel />}
       {subTab === "trend" && <TrendPanel />}
       {subTab === "primer" && <PrimerPanel />}

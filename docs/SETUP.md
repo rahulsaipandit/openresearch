@@ -300,6 +300,62 @@ curl -X POST http://localhost:7842/api/board-session \
 
 ---
 
+## 8. Interview Cognitive Memory (Pluely integration)
+
+No separate server or process — this is the same FastAPI app started in step 5, exposing more routes under `/v1/interview/*` alongside the existing `/api/*` ones. Any local app that can make an HTTP request to `http://localhost:7842` can use it: `curl`, the Chrome extension (already covered by `cors_origins`), or Pluely (the desktop interview-coaching app this was built for — see `docs/openresearch-integration-requirements.md`). There's no auth on these endpoints yet, so anything on the same machine can call them.
+
+Set up a candidate's profile and answer bank first:
+
+```bash
+curl -X PUT http://localhost:7842/v1/interview/profile/cand_demo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "candidate_id": "cand_demo",
+    "resume_text": "Senior backend engineer, 8 years, distributed systems.",
+    "job_description_text": "Staff engineer, platform team.",
+    "custom_instructions": "Keep answers concise and specific."
+  }'
+
+curl -X POST http://localhost:7842/v1/interview/answer-bank/cand_demo \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Scaling the payments queue",
+    "content": "We hit a throughput ceiling at 2k msgs/sec...",
+    "category": "story",
+    "tags": ["scaling", "distributed-systems"]
+  }'
+```
+
+Ask a live question (streams back as Server-Sent Events):
+
+```bash
+curl -N -X POST http://localhost:7842/v1/interview/answer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "sess_1",
+    "candidate_id": "cand_demo",
+    "question": "Tell me about a time you scaled a system under load.",
+    "conversation_history": [],
+    "answer_style": {"format": "full_text", "depth": "balanced"}
+  }'
+```
+
+`-N` disables curl's output buffering so you actually see the chunks arrive rather than the whole response at once — see `docs/openresearch-integration-requirements.md` §2 for why "arrive" here means chunked-after-generation, not true token streaming yet.
+
+Run the pre-interview SM-2 drill skill (questions answered live above become drillable here too — both skills share the same candidate memory):
+
+```bash
+curl http://localhost:7842/v1/interview/skills
+
+curl -X POST http://localhost:7842/v1/interview/skills/pre_interview_drill/apply \
+  -H "Content-Type: application/json" \
+  -d '{"candidate_id": "cand_demo", "args": {"action": "due_today"}}'
+```
+
+See `docs/openresearch-integration-requirements.md` §6/§6.2 for the full design and implementation-status notes, including what's still a placeholder (dedup/topic-guess thresholds, mastery-decay policy) versus load-bearing.
+
+---
+
 ## Troubleshooting
 
 ### `Stock pipeline not initialized`
