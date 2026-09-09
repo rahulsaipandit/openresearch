@@ -401,6 +401,39 @@ export interface InterviewPrepBrief {
   tailored_resume?: TailoredResume | null;
 }
 
+// ── Interview Questions (schemas/interview_memory.py) ───────────────────────
+// Live-interview-coach Q&A history — a candidate-scoped log of answered
+// questions, distinct from the pre-interview-prep brief above.
+
+export interface MatchedSource {
+  id: string;
+  title: string;
+  category: string;
+}
+
+export interface QuestionRecord {
+  id: string;
+  candidate_id: string;
+  session_id: string;
+  question_text: string;
+  topic: string;
+  answer_text: string;
+  judge_score: number | null;
+  judge_rationale: string;
+  matched_sources: MatchedSource[];
+  timestamp: string;
+  ease_factor: number;
+  interval_days: number;
+  repetitions: number;
+  next_review_date: string;
+  last_reviewed: string | null;
+  last_quality: number | null;
+}
+
+export interface QuestionListResponse {
+  questions: QuestionRecord[];
+}
+
 // ── Real Estate Research (schemas/realestate.py) ────────────────────────────
 // Nested snapshots (migration/labor/housing/etc.) are numerous and deep —
 // rendered generically via KeyValueList rather than hand-typed field by field.

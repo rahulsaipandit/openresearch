@@ -30,6 +30,10 @@ Endpoints:
   PUT/DELETE /v1/interview/answer-bank/{candidate_id}/{id}  Update/delete an entry
   GET  /v1/interview/skills                                 List registered skills
   POST /v1/interview/skills/{skill_name}/apply              Apply a skill (e.g. pre_interview_drill)
+
+  Domain answer endpoints (single-tenant, no candidate_id — see §10):
+  POST /v1/stock/answer                                     Stock research Q&A (SSE)
+  POST /v1/realestate/answer                                Real estate market Q&A (SSE)
 """
 
 import asyncio
@@ -94,6 +98,9 @@ from schemas.interview_memory import (
     InterviewProfile,
     SkillApplyRequest,
 )
+from agents.stock.stock_answer_skill import StockAnswerSkill
+from agents.realestate.realestate_answer_skill import RealEstateAnswerSkill
+from schemas.domain_answer import DomainAnswerRequest
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +141,14 @@ _interview_memory_stores: dict[str, InterviewMemoryStore] = {}
 _live_interview_coach: Optional[LiveInterviewCoachSkill] = None
 _pre_interview_drill: Optional[PreInterviewDrillSkill] = None
 
+# ── Domain "answer a question" skills (Stock, Real Estate — §10) ──────────────
+# Single-tenant, no candidate_id, unlike interview memory above — see
+# docs/openresearch-integration-requirements.md §10 for why these stay
+# separate from the cognitive-memory system rather than being generalized
+# into it. (Finance has no dedicated pipeline yet — deliberately not built.)
+_stock_answer_skill:      Optional[StockAnswerSkill] = None
+_realestate_answer_skill: Optional[RealEstateAnswerSkill] = None
+
 
 def _get_interview_memory(candidate_id: str) -> InterviewMemoryStore:
     if candidate_id not in _interview_memory_stores:
@@ -158,6 +173,7 @@ async def lifespan(app: FastAPI):
     global _profile_store, _app_store, _skills_store, _watchlist_store
     global _portfolio_store, _portfolio_optimizer
     global _interview_vector_store, _live_interview_coach, _pre_interview_drill
+    global _stock_answer_skill, _realestate_answer_skill
 
     logger.info("Initializing pipelines...")
     try:
@@ -242,6 +258,26 @@ async def lifespan(app: FastAPI):
         logger.info("Interview cognitive memory ready (live_interview_coach, pre_interview_drill).")
     except Exception as e:
         logger.warning(f"Interview cognitive memory init failed (check config.yaml llm.provider_chain): {e}")
+
+    try:
+        if _query_router and _stock_pipeline:
+            _stock_answer_skill = StockAnswerSkill(
+                LLMClient.from_config(CONFIG_PATH), _query_router, _stock_pipeline, _watchlist_store
+            )
+            logger.info("Stock answer skill ready (POST /v1/stock/answer).")
+        else:
+            logger.warning("Stock answer skill not initialized — query router or stock pipeline unavailable.")
+    except Exception as e:
+        logger.warning(f"Stock answer skill init failed: {e}")
+
+    try:
+        if _realestate_pipeline:
+            _realestate_answer_skill = RealEstateAnswerSkill(LLMClient.from_config(CONFIG_PATH), _realestate_pipeline)
+            logger.info("Real estate answer skill ready (POST /v1/realestate/answer).")
+        else:
+            logger.warning("Real estate answer skill not initialized — real estate pipeline unavailable.")
+    except Exception as e:
+        logger.warning(f"Real estate answer skill init failed: {e}")
 
     try:
         _document_insights = DocumentInsightsAgent(
@@ -502,8 +538,14 @@ async def stock_document_insights(ticker: str = Form(...), file: UploadFile = Fi
 
     import os
     import tempfile
+    from integrations.file_type_check import verify_extension
 
     contents = await file.read()
+    ok, detected = verify_extension(contents, ".pdf")
+    if not ok:
+        raise HTTPException(
+            400, f"File content does not match a PDF (detected: {detected})."
+        )
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(contents)
         tmp_path = tmp.name
@@ -1489,6 +1531,19 @@ def delete_interview_answer_bank_entry(candidate_id: str, entry_id: str):
     return {"deleted": entry_id}
 
 
+@app.get("/v1/interview/questions/{candidate_id}")
+def list_interview_questions(candidate_id: str):
+    return {"questions": _get_interview_memory(candidate_id).list_questions()}
+
+
+@app.delete("/v1/interview/questions/{candidate_id}/{question_id}")
+def delete_interview_question(candidate_id: str, question_id: str):
+    memory = _get_interview_memory(candidate_id)
+    if not memory.delete_question(question_id):
+        raise HTTPException(404, f"Question '{question_id}' not found.")
+    return {"deleted": question_id}
+
+
 @app.get("/v1/interview/skills")
 def list_interview_skills():
     """Skills registered against the interview cognitive memory (e.g.
@@ -1515,6 +1570,83 @@ def apply_interview_skill(skill_name: str, request: SkillApplyRequest):
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return {"result": result}
+
+
+# ── Domain "answer a question" endpoints (Stock, Real Estate — §10) ───────────
+# No candidate_id — these stay single-tenant, unlike /v1/interview/answer.
+# Domain is never inferred from the question text: it's whichever endpoint the
+# client calls. See docs/openresearch-integration-requirements.md §10.
+# (No /v1/finance/answer — there's no dedicated finance pipeline yet; adding
+# one here would mean fabricating behavior nothing backs.)
+
+@app.post("/v1/stock/answer")
+def stock_answer(request: DomainAnswerRequest):
+    if _stock_answer_skill is None:
+        raise HTTPException(503, "Stock answer skill not initialized. Check config.yaml.")
+    if not request.question.strip():
+        raise HTTPException(400, "question must not be empty.")
+
+    try:
+        result = _stock_answer_skill.apply(
+            question=request.question,
+            session_id=request.session_id,
+            conversation_history=request.conversation_history,
+            answer_style=request.answer_style,
+            images=request.images,
+        )
+    except Exception as e:
+        logger.error(f"stock_answer_skill.apply failed: {e}")
+        raise HTTPException(502, f"Answer generation failed: {e}")
+
+    def event_stream():
+        for chunk in _chunk_answer_text(result.answer_text):
+            yield f"data: {json.dumps({'answer_chunk': chunk, 'done': False})}\n\n"
+        final = {
+            "answer_chunk": "",
+            "done": True,
+            "metadata": {
+                "matched_sources": [m.model_dump() for m in result.matched_sources],
+                "images_ignored": result.images_ignored,
+            },
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/v1/realestate/answer")
+def realestate_answer(request: DomainAnswerRequest):
+    if _realestate_answer_skill is None:
+        raise HTTPException(503, "Real estate answer skill not initialized. Check config.yaml.")
+    if not request.question.strip():
+        raise HTTPException(400, "question must not be empty.")
+
+    try:
+        result = _realestate_answer_skill.apply(
+            question=request.question,
+            session_id=request.session_id,
+            conversation_history=request.conversation_history,
+            answer_style=request.answer_style,
+            images=request.images,
+        )
+    except Exception as e:
+        logger.error(f"realestate_answer_skill.apply failed: {e}")
+        raise HTTPException(502, f"Answer generation failed: {e}")
+
+    def event_stream():
+        for chunk in _chunk_answer_text(result.answer_text):
+            yield f"data: {json.dumps({'answer_chunk': chunk, 'done': False})}\n\n"
+        final = {
+            "answer_chunk": "",
+            "done": True,
+            "metadata": {
+                "matched_sources": [m.model_dump() for m in result.matched_sources],
+                "images_ignored": result.images_ignored,
+            },
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ── Background task ───────────────────────────────────────────────────────────

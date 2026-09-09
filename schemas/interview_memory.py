@@ -15,30 +15,15 @@ integration.
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
-AnswerFormat = Literal["full_text", "list", "keywords"]
-AnswerDepth = Literal["one_liner", "balanced", "detailed"]
+# Re-exported for backward compatibility — these moved to schemas/answer_common.py
+# so the domain "answer a question" endpoints (Stock, Real Estate — §10) could
+# share them without importing an interview-specific module. Existing
+# `from schemas.interview_memory import AnswerStyle, ImageAttachment, MatchedSource`
+# call sites keep working unchanged.
+from schemas.answer_common import AnswerStyle, ImageAttachment, MatchedSource  # noqa: F401
+
 AnswerBankCategory = Literal["story", "prepared_answer", "talking_point"]
 AssessmentSource = Literal["llm_judge", "candidate_override"]
-
-
-class AnswerStyle(BaseModel):
-    format: AnswerFormat = "full_text"
-    depth: AnswerDepth = "balanced"
-
-
-class ImageAttachment(BaseModel):
-    """A single image, always carried as base64 over the wire.
-
-    Two distinct lifetimes use this same shape (§2.1):
-    - Inline on an AnswerRequest: a candidate's live screenshot, ephemeral —
-      passed to the model for that one answer, never persisted.
-    - On an AnswerBankEntry: a stored diagram/image that's part of a saved
-      story, persisted to disk (see InterviewMemoryStore) and echoed back in
-      MatchedSource.images whenever that entry grounds an answer.
-    """
-    media_type: str  # e.g. "image/png", "image/jpeg", "image/webp"
-    data: str         # base64-encoded image bytes
-    caption: Optional[str] = None
 
 
 class InterviewProfile(BaseModel):
@@ -75,13 +60,6 @@ class SkillApplyRequest(BaseModel):
     """Request body for POST /v1/interview/skills/{skill_name}/apply."""
     candidate_id: str
     args: dict = Field(default_factory=dict)
-
-
-class MatchedSource(BaseModel):
-    id: str
-    title: str
-    category: str
-    images: list[ImageAttachment] = Field(default_factory=list)
 
 
 class QuestionRecord(BaseModel):

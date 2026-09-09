@@ -11,6 +11,7 @@ import type {
   PortfolioOptimizeRequest,
   PortfolioResponse,
   QueryResponse,
+  QuestionListResponse,
   RealEstateBrief,
   ResearchBrief,
   ResearchPrimer,
@@ -157,6 +158,17 @@ export function runInterviewPrep(payload: Record<string, unknown>) {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function getInterviewQuestions(candidateId: string) {
+  return request<QuestionListResponse>(`/v1/interview/questions/${encodeURIComponent(candidateId)}`);
+}
+
+export function deleteInterviewQuestion(candidateId: string, questionId: string) {
+  return request<{ deleted: string }>(
+    `/v1/interview/questions/${encodeURIComponent(candidateId)}/${encodeURIComponent(questionId)}`,
+    { method: "DELETE" }
+  );
 }
 
 export function runRealEstateResearch(payload: Record<string, unknown>) {

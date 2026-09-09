@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { runInterviewPrep } from "../api";
-import type { InterviewPrepBrief, STARAnswer } from "../types";
+import { deleteInterviewQuestion, getInterviewQuestions, runInterviewPrep } from "../api";
+import type { InterviewPrepBrief, QuestionRecord, STARAnswer } from "../types";
 import { ContentDialog } from "../components/ContentDialog";
 
 export function InterviewPanel() {
@@ -51,6 +51,90 @@ export function InterviewPanel() {
 
       {error && <div className="error-banner">{error}</div>}
       {result && <BriefView brief={result} />}
+
+      <QuestionHistorySection />
+    </div>
+  );
+}
+
+function QuestionHistorySection() {
+  const [candidateId, setCandidateId] = useState("");
+  const [questions, setQuestions] = useState<QuestionRecord[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<QuestionRecord | null>(null);
+
+  async function handleLoad() {
+    if (!candidateId.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await getInterviewQuestions(candidateId.trim());
+      setQuestions(res.questions);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDelete(questionId: string) {
+    try {
+      await deleteInterviewQuestion(candidateId.trim(), questionId);
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Live Interview Question History</h3>
+      <div className="query-box">
+        <input
+          value={candidateId}
+          onChange={(e) => setCandidateId(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleLoad()}
+          placeholder="Candidate ID"
+        />
+        <button type="button" onClick={handleLoad} disabled={loading}>
+          {loading ? "Loading..." : "Load"}
+        </button>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+
+      <ul className="watchlist-grid">
+        {questions.map((q) => (
+          <li key={q.id} className="watchlist-row">
+            <button type="button" className="link-btn" onClick={() => setViewing(q)}>
+              {q.question_text || "(untitled question)"}
+            </button>
+            <span className="added-at">
+              {q.topic} · {q.timestamp ? new Date(q.timestamp).toLocaleString() : ""}
+              {q.judge_score !== null && ` · score ${q.judge_score.toFixed(1)}`}
+            </span>
+            <button type="button" className="remove-btn" onClick={() => handleDelete(q.id)}>
+              Delete
+            </button>
+          </li>
+        ))}
+        {questions.length === 0 && <li className="empty-state">No questions loaded yet.</li>}
+      </ul>
+
+      <ContentDialog title={viewing?.question_text ?? ""} open={viewing !== null} onClose={() => setViewing(null)}>
+        {viewing && (
+          <div>
+            <p>
+              <strong>Answer:</strong> {viewing.answer_text}
+            </p>
+            {viewing.judge_rationale && (
+              <p className="muted">
+                <strong>Judge rationale:</strong> {viewing.judge_rationale}
+              </p>
+            )}
+          </div>
+        )}
+      </ContentDialog>
     </div>
   );
 }

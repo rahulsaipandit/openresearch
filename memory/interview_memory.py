@@ -280,7 +280,7 @@ class InterviewMemoryStore:
             self._image_cache.pop(entry_id, None)
             if self.vector_store:
                 self.vector_store.delete(f"answer_bank:{self.candidate_id}:{entry_id}")
-            self.graph.remove_node(entry_id)
+            self.graph.remove_node(f"answer_bank:{entry_id}")
             self.graph.save()
             return True
 
@@ -376,6 +376,36 @@ class InterviewMemoryStore:
 
     def list_questions(self) -> list[QuestionRecord]:
         return [self._parse_question_file(p) for p in sorted(self.questions_dir.glob("*.md"))]
+
+    def delete_question(self, question_id: str) -> bool:
+        """Delete a live-interview Q&A turn and everything derived from it:
+        its vector embedding, its graph edges, and any assessment graded
+        against it — followed by a topic-mastery recompute, since mastery
+        (_recompute_topic_summary) is a query over assessment history, not a
+        stored field, and would otherwise keep counting a deleted question's
+        assessment forever."""
+        with self._lock:
+            path = self.questions_dir / f"{question_id}.md"
+            if not path.exists():
+                return False
+            path.unlink()
+
+            if self.vector_store:
+                self.vector_store.delete(f"question:{self.candidate_id}:{question_id}")
+            self.graph.remove_node(f"question:{question_id}")
+
+            question_ref = f"questions/{question_id}.md"
+            affected_topics: set[str] = set()
+            for assessment_path in sorted(self.assessments_dir.glob("*.md")):
+                frontmatter, _ = read_markdown_file(assessment_path)
+                if frontmatter.get("question_ref") == question_ref:
+                    affected_topics.add(frontmatter.get("topic"))
+                    assessment_path.unlink()
+
+            self.graph.save()
+            for topic in affected_topics:
+                self._recompute_topic_summary(topic)
+            return True
 
     def update_question_drill_state(self, record: QuestionRecord) -> None:
         """Rewrite SM-2 fields on an existing question record after a drill review."""

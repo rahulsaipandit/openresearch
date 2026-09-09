@@ -111,6 +111,15 @@ class DocumentLoader:
     def _extract(self, path: Path) -> str:
         ext = path.suffix.lower()
         try:
+            from integrations.file_type_check import verify_extension
+            ok, detected = verify_extension(path.read_bytes(), ext)
+            if not ok:
+                logger.warning(
+                    f"Skipping {path.name}: content does not match '{ext}' "
+                    f"(detected: {detected})."
+                )
+                return ""
+
             if ext == ".docx":
                 return self._extract_docx(path)
             elif ext == ".pdf":

@@ -17,7 +17,9 @@
 llm:
   provider_chain:
     - provider: openai_compatible
-      base_url: http://192.168.12.247:1234/v1
+      base_url: http://localhost:1234/v1   # was 192.168.12.247 — a stale LAN IP from a
+                                            # different network; LM Studio is on this same
+                                            # machine, so localhost is the reliable address.
       model: qwen/qwen3.5-9b:2
       api_key: lm-studio      # placeholder — not validated by local servers
 

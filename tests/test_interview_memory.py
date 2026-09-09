@@ -160,6 +160,47 @@ def test_record_and_parse_question(store: InterviewMemoryStore):
     assert f"answer_bank:e1" in store.graph.neighbors(f"question:{record.id}")
 
 
+def test_delete_question_removes_record_and_graph_edges(store: InterviewMemoryStore):
+    record = store.record_question(
+        QuestionRecord(
+            id="", candidate_id="", session_id="sess1",
+            question_text="Tell me about a conflict.",
+            topic="conflict-resolution",
+            answer_text="I disagreed with a peer about the API design...",
+        )
+    )
+    assert store.delete_question(record.id) is True
+    assert store.get_question(record.id) is None
+    assert store.graph.neighbors(f"question:{record.id}") == []
+    assert store.delete_question(record.id) is False
+
+
+def test_delete_question_cascades_to_assessments_and_recomputes_mastery(store: InterviewMemoryStore):
+    record = store.record_question(
+        QuestionRecord(
+            id="", candidate_id="", session_id="sess1",
+            question_text="Tell me about a conflict.",
+            topic="system-design", answer_text="...",
+        )
+    )
+    store.record_assessment(
+        Assessment(
+            id="", candidate_id="", topic="system-design", judge_score=0.4,
+            question_ref=f"questions/{record.id}.md", rationale="weak",
+        )
+    )
+    kept = store.record_assessment(
+        Assessment(id="", candidate_id="", topic="system-design", judge_score=0.6, rationale="unrelated")
+    )
+    assert kept.sample_count == 2
+
+    store.delete_question(record.id)
+
+    summary = store.get_topic_summary("system-design")
+    assert summary.sample_count == 1
+    assert summary.mastery_score == pytest.approx(0.6)
+
+
 # ── Versioned assessments + derived topic mastery ────────────────────────────
 
 def test_topic_mastery_is_derived_not_mutated(store: InterviewMemoryStore):

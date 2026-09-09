@@ -688,6 +688,23 @@ class RealEstateBrief(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
 
+# ── Free-text question extraction (§10 — POST /v1/realestate/answer) ──────────
+
+class RealEstateQueryExtraction(BaseModel):
+    """RealEstatePipeline needs structured city/state (+ optional property
+    details), not free text. This is what a small LLM call extracts from a
+    candidate's natural-language question before the pipeline runs — the
+    real-estate equivalent of QueryRouterAgent's ticker extraction for stock,
+    just simpler (no exchange-suffix resolution needed)."""
+    city: Optional[str] = None
+    state: Optional[str] = None                      # 2-letter abbreviation, e.g. "TX"
+    address: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[float] = None
+    sqft: Optional[int] = None
+    purchase_price: Optional[float] = None
+
+
 # ── Pipeline input ─────────────────────────────────────────────────────────────
 
 class RealEstatePipelineInput(BaseModel):

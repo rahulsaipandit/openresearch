@@ -14,6 +14,15 @@ This guide walks you from a fresh clone to a running server in about 10 minutes.
 
 ## 1. Install Dependencies
 
+If more than one Python version is installed on this machine, create the venv with an **explicit, pinned** interpreter rather than a bare `python` — this project is tested on Python 3.12, and a venv accidentally built on a different version can fail at import time with `ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'` (pydantic_core ships version-specific compiled wheels, e.g. `cp312`, that don't match a different interpreter's ABI):
+
+```bash
+py -3.12 -m venv .venv          # Windows, if the py launcher is installed
+.venv\Scripts\python.exe -m pip install -e .
+```
+
+Only one Python on this machine? Plain `pip install -e .` is fine:
+
 ```bash
 pip install -e .
 ```

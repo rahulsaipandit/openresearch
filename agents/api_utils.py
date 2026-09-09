@@ -461,6 +461,39 @@ class _Backend:
         return content
 
 
+def _verify_images(images: Optional[list[dict]]) -> list[dict]:
+    """
+    Drop any image whose base64 bytes don't actually match its declared
+    media_type (checked against real content via magika, not the client-
+    supplied string) — an ImageAttachment.media_type is attacker-controlled
+    input forwarded straight into a vision API call otherwise. Mismatched
+    images are dropped rather than raising, consistent with
+    create_multimodal()'s existing graceful degradation.
+    """
+    if not images:
+        return images or []
+
+    import base64
+    from integrations.file_type_check import verify_image
+
+    verified = []
+    for img in images:
+        try:
+            raw = base64.b64decode(img["data"], validate=True)
+        except Exception:
+            logger.warning("Dropping image attachment: invalid base64 data.")
+            continue
+        ok, detected = verify_image(raw, img["media_type"])
+        if not ok:
+            logger.warning(
+                f"Dropping image attachment: declared media_type="
+                f"{img['media_type']!r} but content is actually {detected!r}."
+            )
+            continue
+        verified.append(img)
+    return verified
+
+
 # ── Public LLMClient ───────────────────────────────────────────────────────────
 
 class LLMClient:
@@ -613,6 +646,7 @@ class LLMClient:
         content-type error from a text-only local model is a normal outcome,
         not a bug to surface.
         """
+        images = _verify_images(images)
         if not images:
             return self.create(system, messages, max_tokens, verbose), False
 

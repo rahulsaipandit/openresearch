@@ -82,6 +82,59 @@ problem:
 autoresearch run
 ```
 
+## Running the API server (Pluely / desktop app integration)
+
+Beyond the CLI pipeline above, this repo also runs as a local FastAPI server (`server.py`) — the backend for the desktop app (`desktop/`) and for the Pluely Interview Assistant integration (candidate-scoped cognitive memory: résumé/JD grounding, answer bank, live retrieval-grounded answers).
+
+**Quick run (after the 1st install):**
+
+```powershell
+.venv\Scripts\python.exe server.py
+```
+
+Always invoke `.venv\Scripts\python.exe` by its full path — don't `.\activate` and then run bare `python.exe`. If this machine has more than one Python installed, activation can leave `python` resolving to the wrong one, and a mismatched interpreter silently recreates a broken venv (see the pinned version note below).
+
+### 1. Install dependencies into a project venv
+
+If more than one Python version is installed on this machine, **pin the version explicitly** — a bare `python -m venv .venv` picks whatever `python` happens to resolve to, which can silently create a venv on the wrong version. `pydantic_core` (a pinned FastAPI/Pydantic dependency) ships version-specific compiled wheels (e.g. `cp312`), so a venv built on the wrong interpreter fails at import time with `ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'` — the underlying `.pyd` simply doesn't match the interpreter's ABI. This project is tested on **Python 3.12**:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -e .
+```
+
+(No `py` launcher, or only one Python installed? Plain `python -m venv .venv` is fine — just confirm with `python --version` first.)
+
+### 2. Configure an LLM provider
+
+Edit `config.yaml`'s `llm.provider_chain` — a cloud provider (Anthropic/OpenAI/MiniMax) or a local model via LM Studio/Ollama (`provider: openai_compatible`). See `docs/SETUP.md` for details.
+
+### 3. Start the server
+
+```bash
+.venv\Scripts\python.exe server.py
+```
+
+```
+OpenResearch Server
+Running at http://127.0.0.1:7842
+```
+
+### 4. Verify it's up
+
+```bash
+curl http://localhost:7842/api/health
+```
+
+### What Pluely talks to
+
+- `POST /v1/interview/answer` — the live-coaching endpoint (Server-Sent Events streaming), accepts an optional `images` field for a candidate's screenshot
+- `GET/PUT /v1/interview/profile/{candidate_id}` — résumé/JD/custom instructions
+- `GET/POST /v1/interview/answer-bank/{candidate_id}`, `PUT/DELETE .../{entry_id}` — the candidate's personal answer bank (stories, prepared answers, talking points; entries can carry attached images)
+- `GET /v1/interview/skills`, `POST /v1/interview/skills/{skill_name}/apply` — e.g. `pre_interview_drill`'s SM-2 spaced-repetition practice
+
+Full request/response contracts, a step-by-step curl walkthrough, and open integration items are in `docs/SETUP.md` (§8) and `docs/openresearch-integration-requirements.md`.
+
 ## Typical workflow
 
 1. Provide a plain English problem statement
