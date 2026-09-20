@@ -172,4 +172,16 @@ class InterviewVectorStore(ChromaVectorStore):
 
             embedding_function = get_nomic_embedding_function()
 
-        return cls(data_dir / "interview_memory_vectors", embedding_function=embedding_function)
+        # Path is namespaced by embedding_model rather than shared — two
+        # embedders can produce different-dimension vectors, and chromadb
+        # can't reopen an existing collection under a different embedding
+        # function without erroring. Namespacing means flipping this config
+        # value always lands on a distinct (initially empty) collection
+        # instead of crashing against one built under the other embedder, at
+        # the cost of starting that collection unindexed — an acceptable
+        # tradeoff before there's any real data to preserve across a switch.
+        collection_dirname = (
+            "interview_memory_vectors" if embedding_model == "default"
+            else f"interview_memory_vectors_{embedding_model}"
+        )
+        return cls(data_dir / collection_dirname, embedding_function=embedding_function)

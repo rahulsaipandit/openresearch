@@ -123,10 +123,10 @@ interview_memory:
   # "default" = chromadb's bundled ONNX MiniLM (384-dim, no extra install).
   # "nomic-embed-text-v1.5" = run in-process via sentence-transformers (see
   # store/embedding_functions.py) — requires the optional
-  # `pip install openresearch[nomic-embeddings]` extra, and switching an
-  # existing installation requires a one-time re-embed migration first:
-  # `python scripts/reembed_interview_memory.py` (see docs/designInterviewTool.md
-  # "Embedding model: nomic-embed-text-v1.5, run in-process (no server)").
+  # `pip install openresearch[nomic-embeddings]` extra. Each value gets its
+  # own vector store path (interview_memory_vectors[_<model>]), so switching
+  # this always starts from an empty, correctly-dimensioned collection
+  # rather than erroring against one built under a different embedder.
   embedding_model: default
 
 

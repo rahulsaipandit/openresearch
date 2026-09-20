@@ -4,9 +4,10 @@ chromadb's bundled default (ONNX MiniLM, 384-dim, no extra install).
 
 See docs/designInterviewTool.md's "Embedding model: nomic-embed-text-v1.5,
 run in-process (no server)" section for the full design and the concerns
-this resolves (dimension mismatch requiring a re-embed migration — see
-scripts/reembed_interview_memory.py — and the asymmetric query/document
-prefixing nomic's model needs to perform as documented).
+this resolves (dimension mismatch — avoided by keying each embedding
+model's collection to its own path, see InterviewVectorStore.from_config —
+and the asymmetric query/document prefixing nomic's model needs to perform
+as documented).
 
 sentence-transformers/torch/einops are NOT in the base project dependencies
 — they're a heavy, opt-in install (`pip install openresearch[nomic-embeddings]`)

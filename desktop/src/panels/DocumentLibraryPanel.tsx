@@ -36,6 +36,7 @@ export function DocumentLibrarySection() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -58,15 +59,21 @@ export function DocumentLibrarySection() {
     if (files.length === 0 || !candidateId.trim()) return;
     setUploading(true);
     setUploadProgress({ done: 0, total: files.length });
-    setError(null);
+    setUploadErrors([]);
+    // Own state, separate from handleLoad's `error` — collected rather than
+    // overwritten (a failure on file 1 shouldn't be hidden by file 2's
+    // success), and kept apart from `error` so the handleLoad() call below
+    // doesn't wipe it out via its own setError(null).
+    const failures: string[] = [];
     try {
       for (let i = 0; i < files.length; i++) {
         try {
           await uploadInterviewDocument(candidateId.trim(), files[i], docType);
         } catch (err) {
-          setError(`${files[i].name}: ${err instanceof Error ? err.message : String(err)}`);
+          failures.push(`${files[i].name}: ${err instanceof Error ? err.message : String(err)}`);
         }
         setUploadProgress({ done: i + 1, total: files.length });
+        setUploadErrors([...failures]);
       }
       await handleLoad();
     } finally {
@@ -144,6 +151,13 @@ export function DocumentLibrarySection() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {uploadErrors.length > 0 && (
+        <div className="error-banner">
+          {uploadErrors.map((e, i) => (
+            <div key={i}>{e}</div>
+          ))}
+        </div>
+      )}
 
       <ul className="watchlist-grid">
         {documents.map((d) => (

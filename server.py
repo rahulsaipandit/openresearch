@@ -68,7 +68,7 @@ from agents.stock.sec_qa import SECQAAgent
 from agents.stock.document_insights import DocumentInsightsAgent
 from agents.stock.xbrl_fallback import XBRLFallbackAgent
 from agents.stock.portfolio_optimizer import PortfolioOptimizerAgent
-from agents.stock.quote_fetcher import get_quotes
+from agents.stock.quote_fetcher import get_quotes_cached
 from pipelines.stock_pipeline import StockResearchPipeline
 from pipelines.primer_pipeline import ResearchPrimerPipeline
 from pipelines.board_pipeline import ExecutiveBoardPipeline
@@ -347,7 +347,7 @@ async def _check_price_alerts():
         return
 
     tickers = list({a.ticker for a in alerts})
-    quotes = await asyncio.to_thread(get_quotes, tickers)
+    quotes = await asyncio.to_thread(get_quotes_cached, tickers)
     price_by_ticker = {q["ticker"]: q["price"] for q in quotes if q.get("price") is not None}
 
     for alert in alerts:
@@ -732,11 +732,14 @@ def get_watchlist_quotes():
     """Live price snapshot for every watchlist ticker — a cheap yfinance
     fast_info fetch (see agents/stock/quote_fetcher.py), not the full
     research pipeline. Adapted from OpenStock's getQuote()/getWatchlistData()
-    pattern (docs/researchStockSolutions.md)."""
+    pattern (docs/researchStockSolutions.md). Quotes are cached for up to 90s
+    (get_quotes_cached), shared with the alert poller below, so multiple
+    open desktop clients polling this endpoint don't each trigger their own
+    full re-fetch of every ticker."""
     if _watchlist_store is None:
         raise HTTPException(503, "Watchlist store not initialized.")
     tickers = [i.ticker for i in _watchlist_store.load()]
-    return {"quotes": get_quotes(tickers)}
+    return {"quotes": get_quotes_cached(tickers)}
 
 
 @app.get("/api/alerts")

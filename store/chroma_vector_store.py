@@ -37,10 +37,11 @@ class ChromaVectorStore:
         """`embedding_function`, when given, replaces chromadb's bundled
         default (ONNX MiniLM) — e.g. store/embedding_functions.py's
         NomicEmbeddingFunction. Kept as an explicit opt-in constructor arg
-        (not a config global) since switching a collection's embedding
-        function requires a one-time re-embed migration — see
-        scripts/reembed_interview_memory.py and docs/designInterviewTool.md's
-        "Embedding model" section — not something to silently pick up."""
+        (not a config global) since a collection is permanently tied to
+        whatever embedding function created it — callers that key their
+        collection path by embedding model (see
+        InterviewVectorStore.from_config) avoid ever reopening one under a
+        mismatched embedder rather than needing a migration step."""
         import chromadb
 
         self.path = Path(path)
