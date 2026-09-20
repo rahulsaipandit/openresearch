@@ -105,7 +105,6 @@ from schemas.interview_memory import (
     AnswerBankEntryCreate,
     AnswerRequest,
     DocumentType,
-    DocumentUploadResult,
     InterviewProfile,
     SkillApplyRequest,
 )
@@ -1656,7 +1655,7 @@ def list_interview_documents(candidate_id: str):
     return {"documents": [d.model_dump() | {"stale": d.stale} for d in memory.list_documents()]}
 
 
-@app.post("/v1/interview/documents/{candidate_id}", response_model=DocumentUploadResult)
+@app.post("/v1/interview/documents/{candidate_id}")
 async def upload_interview_document(
     candidate_id: str,
     file: UploadFile = File(...),
@@ -1666,13 +1665,25 @@ async def upload_interview_document(
     write-up, incident postmortem, seed question, ...) — per-page parsed and
     chunked, magika-verified against its extension before parsing. Uploading
     the same filename again re-embeds only if its content actually changed
-    (see InterviewMemoryStore.add_document / DocumentRecord staleness)."""
+    (see InterviewMemoryStore.add_document / DocumentRecord staleness).
+
+    No `response_model=DocumentUploadResult` here — pydantic's response-model
+    serialization only emits declared fields, and `DocumentRecord.stale` is a
+    `@property`, not a field, so it would silently be dropped from
+    `result.document` unlike list_interview_documents() below, which patches
+    it back in explicitly. Building the dict by hand keeps both endpoints'
+    `DocumentRecord` shape identical."""
     memory = _get_interview_memory(candidate_id)
     content = await file.read()
     try:
-        return memory.add_document(file.filename, doc_type, content)
+        result = memory.add_document(file.filename, doc_type, content)
     except UnsupportedDocumentError as e:
         raise HTTPException(400, str(e))
+    return {
+        "document": result.document.model_dump() | {"stale": result.document.stale},
+        "chunks_indexed": result.chunks_indexed,
+        "reindexed": result.reindexed,
+    }
 
 
 @app.delete("/v1/interview/documents/{candidate_id}/{doc_id}")

@@ -354,10 +354,25 @@ class InterviewMemoryStore:
             doc_id = existing.doc_id if existing else uuid.uuid4().hex[:16]
             content_changed = existing is None or existing.content_hash != content_hash
 
-            self._document_original_path(doc_id, ext).write_bytes(content)
+            final_path = self._document_original_path(doc_id, ext)
 
             if content_changed:
-                pages = document_ingestion.extract_pages(self._document_original_path(doc_id, ext))
+                # Validate against a temp path first — on a re-upload of an
+                # existing doc_id, writing straight to final_path before
+                # extraction succeeds would clobber the last-known-good
+                # original if extract_pages() then raises (corrupt file,
+                # magika mismatch), leaving the registry pointing at content
+                # that no longer exists on disk. Only replace final_path
+                # once extraction has actually succeeded.
+                tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+                tmp_path.write_bytes(content)
+                try:
+                    pages = document_ingestion.extract_pages(tmp_path)
+                except Exception:
+                    tmp_path.unlink(missing_ok=True)
+                    raise
+                tmp_path.replace(final_path)
+
                 chunks = document_ingestion.chunk_pages(pages)
                 chunks_indexed = 0
                 if self.vector_store:
@@ -375,6 +390,10 @@ class InterviewMemoryStore:
                 source_modified_at = now
                 last_indexed_at = now
             else:
+                # Content is byte-identical to what's already indexed — just
+                # refresh the stored original (safe: same bytes, no
+                # extraction to fail) rather than re-parsing and re-embedding.
+                final_path.write_bytes(content)
                 chunks_indexed = 0
                 page_count = existing.page_count
                 source_modified_at = existing.source_modified_at

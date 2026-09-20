@@ -12,7 +12,7 @@ export function DocumentInsightsPanel() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
   const [answers, setAnswers] = useState<DocumentInsightAnswer[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -25,18 +25,22 @@ export function DocumentInsightsPanel() {
     if (!ticker.trim() || files.length === 0) return;
 
     setLoading(true);
-    setError(null);
+    setErrors([]);
     setAnswers([]);
     setProgress({ done: 0, total: files.length });
     const results: DocumentInsightAnswer[] = [];
+    // Collected rather than overwritten — a failure on file 1 shouldn't be
+    // hidden by file 2's success or a later file's different failure.
+    const failures: string[] = [];
     for (let i = 0; i < files.length; i++) {
       try {
         results.push(await askDocumentInsights(ticker.trim(), files[i]));
       } catch (e) {
-        setError(`${files[i].name}: ${e instanceof Error ? e.message : String(e)}`);
+        failures.push(`${files[i].name}: ${e instanceof Error ? e.message : String(e)}`);
       }
       setProgress({ done: i + 1, total: files.length });
       setAnswers([...results]);
+      setErrors([...failures]);
     }
     setLoading(false);
     setProgress(null);
@@ -81,7 +85,13 @@ export function DocumentInsightsPanel() {
         </button>
       </div>
 
-      {error && <div className="error-banner">{error}</div>}
+      {errors.length > 0 && (
+        <div className="error-banner">
+          {errors.map((e, i) => (
+            <div key={i}>{e}</div>
+          ))}
+        </div>
+      )}
 
       {answers.map((answer, i) => (
         <div key={i} className="brief-view">

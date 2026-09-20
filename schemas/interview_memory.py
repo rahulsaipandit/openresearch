@@ -85,6 +85,18 @@ class DocumentRecord(BaseModel):
 
     @property
     def stale(self) -> bool:
+        """True when the document's content has changed more recently than
+        it was last (re-)indexed.
+
+        NOTE: under the current synchronous ingestion path,
+        InterviewMemoryStore.add_document always sets `source_modified_at`
+        and `last_indexed_at` to the same timestamp in the same call
+        whenever content changes — so this is always False today. It only
+        becomes meaningful once there's an out-of-band way for
+        `source_modified_at` to advance without an immediate re-index (e.g.
+        a watched-folder importer, or making re-embedding an async
+        background step) — until then, don't rely on this to ever report
+        True."""
         return bool(self.source_modified_at) and self.source_modified_at > self.last_indexed_at
 
 

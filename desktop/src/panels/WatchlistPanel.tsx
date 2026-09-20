@@ -107,8 +107,12 @@ export function WatchlistPanel() {
   }
 
   async function handleRemoveAlert(id: string) {
-    const res = await deleteAlert(id);
-    setAlerts(res.alerts);
+    try {
+      const res = await deleteAlert(id);
+      setAlerts(res.alerts);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   return (
