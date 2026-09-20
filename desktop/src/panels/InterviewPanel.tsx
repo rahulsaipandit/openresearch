@@ -2,6 +2,7 @@ import { useState } from "react";
 import { deleteInterviewQuestion, getInterviewQuestions, runInterviewPrep } from "../api";
 import type { InterviewPrepBrief, QuestionRecord, STARAnswer } from "../types";
 import { ContentDialog } from "../components/ContentDialog";
+import { AnswerTesterSection, DocumentLibrarySection } from "./DocumentLibraryPanel";
 
 export function InterviewPanel() {
   const [jdText, setJdText] = useState("");
@@ -53,6 +54,8 @@ export function InterviewPanel() {
       {result && <BriefView brief={result} />}
 
       <QuestionHistorySection />
+      <DocumentLibrarySection />
+      <AnswerTesterSection />
     </div>
   );
 }

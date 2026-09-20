@@ -12,6 +12,10 @@ Endpoints:
   GET  /api/watchlist           List watchlist (up to 20 tickers)
   POST /api/watchlist           Add a ticker to the watchlist
   DELETE /api/watchlist/{ticker} Remove a ticker from the watchlist
+  GET  /api/watchlist/quotes    Live price snapshot for every watchlist ticker
+  GET  /api/alerts              List price alerts
+  POST /api/alerts              Create a price alert (ticker, condition, target_price)
+  DELETE /api/alerts/{id}       Remove a price alert
   GET  /api/portfolio           List portfolio holdings
   POST /api/portfolio           Add/update a holding (ticker, shares, cost basis)
   DELETE /api/portfolio/{ticker} Remove a holding
@@ -28,6 +32,8 @@ Endpoints:
   GET/PUT /v1/interview/profile/{candidate_id}              Résumé/JD/instructions
   GET/POST /v1/interview/answer-bank/{candidate_id}         List/create answer-bank entries
   PUT/DELETE /v1/interview/answer-bank/{candidate_id}/{id}  Update/delete an entry
+  GET/POST /v1/interview/documents/{candidate_id}           List/upload ingested documents (RAG)
+  DELETE /v1/interview/documents/{candidate_id}/{doc_id}    Delete an ingested document
   GET  /v1/interview/skills                                 List registered skills
   POST /v1/interview/skills/{skill_name}/apply              Apply a skill (e.g. pre_interview_drill)
 
@@ -62,6 +68,7 @@ from agents.stock.sec_qa import SECQAAgent
 from agents.stock.document_insights import DocumentInsightsAgent
 from agents.stock.xbrl_fallback import XBRLFallbackAgent
 from agents.stock.portfolio_optimizer import PortfolioOptimizerAgent
+from agents.stock.quote_fetcher import get_quotes
 from pipelines.stock_pipeline import StockResearchPipeline
 from pipelines.primer_pipeline import ResearchPrimerPipeline
 from pipelines.board_pipeline import ExecutiveBoardPipeline
@@ -71,6 +78,7 @@ from schemas.stock import StockPipelineInput, ResearchBrief, TrendData
 from schemas.query import QueryRouterResult
 from schemas.comparison import ComparisonBrief
 from schemas.watchlist import WatchlistItem
+from schemas.alert import PriceAlert
 from schemas.portfolio import PortfolioOptimizeRequest, PortfolioOptimizationResult
 from schemas.primer import PrimerPipelineInput, ResearchPrimer
 from schemas.sec_insights import SECAnswer
@@ -84,6 +92,7 @@ from store.profile_store import ProfileStore
 from store.application_store import ApplicationStore
 from store.skills_store import SkillsStore
 from store.watchlist_store import WatchlistStore
+from store.alert_store import AlertStore
 from store.portfolio_store import PortfolioStore
 from agents.interview.memory_judge_agent import MemoryJudgeAgent
 from agents.interview.skills.base import get_skill, list_skills, register_skill
@@ -95,9 +104,12 @@ from schemas.interview_memory import (
     AnswerBankEntry,
     AnswerBankEntryCreate,
     AnswerRequest,
+    DocumentType,
+    DocumentUploadResult,
     InterviewProfile,
     SkillApplyRequest,
 )
+from memory.document_ingestion import UnsupportedDocumentError
 from agents.stock.stock_answer_skill import StockAnswerSkill
 from agents.realestate.realestate_answer_skill import RealEstateAnswerSkill
 from schemas.domain_answer import DomainAnswerRequest
@@ -131,6 +143,15 @@ _app_store:         Optional[ApplicationStore] = None
 _skills_store:      Optional[SkillsStore] = None
 _watchlist_store:   Optional[WatchlistStore] = None
 _portfolio_store:   Optional[PortfolioStore] = None
+_alert_store:       Optional[AlertStore] = None
+
+# ── Price-alert background poller ──────────────────────────────────────────────
+# Adapted from OpenStock's Inngest cron (docs/researchStockSolutions.md) —
+# every 5 minutes, fetch live quotes for tickers with active alerts and flip
+# any that have crossed their threshold. A plain asyncio loop rather than a
+# job-scheduling framework since it's the only scheduled job in the app.
+_ALERT_POLL_INTERVAL_SECONDS = 300
+_alert_poll_task: Optional[asyncio.Task] = None
 
 # ── Interview cognitive memory (Pluely live-coaching integration) ─────────────
 # Separate from the pipeline/stores above — see docs/openresearch-integration-
@@ -172,6 +193,7 @@ async def lifespan(app: FastAPI):
     global _query_router, _comparison_analyst, _trend_analyst, _sec_qa_agent, _document_insights
     global _profile_store, _app_store, _skills_store, _watchlist_store
     global _portfolio_store, _portfolio_optimizer
+    global _alert_store, _alert_poll_task
     global _interview_vector_store, _live_interview_coach, _pre_interview_drill
     global _stock_answer_skill, _realestate_answer_skill
 
@@ -229,6 +251,13 @@ async def lifespan(app: FastAPI):
         logger.info("Watchlist store ready.")
     except Exception as e:
         logger.warning(f"Watchlist store init failed: {e}")
+
+    try:
+        _alert_store = AlertStore.from_config(CONFIG_PATH)
+        _alert_poll_task = asyncio.create_task(_alert_poll_loop())
+        logger.info(f"Alert store ready — polling every {_ALERT_POLL_INTERVAL_SECONDS}s.")
+    except Exception as e:
+        logger.warning(f"Alert store/poller init failed: {e}")
 
     try:
         _portfolio_store = PortfolioStore.from_config(CONFIG_PATH)
@@ -294,6 +323,48 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Server shutting down.")
+    if _alert_poll_task is not None:
+        _alert_poll_task.cancel()
+
+
+async def _alert_poll_loop():
+    """Runs for the lifetime of the app: every _ALERT_POLL_INTERVAL_SECONDS,
+    check active price alerts against live quotes."""
+    while True:
+        try:
+            await asyncio.sleep(_ALERT_POLL_INTERVAL_SECONDS)
+            await _check_price_alerts()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Alert poll loop error: {e}", exc_info=True)
+
+
+async def _check_price_alerts():
+    if _alert_store is None:
+        return
+    alerts = _alert_store.active_alerts()
+    if not alerts:
+        return
+
+    tickers = list({a.ticker for a in alerts})
+    quotes = await asyncio.to_thread(get_quotes, tickers)
+    price_by_ticker = {q["ticker"]: q["price"] for q in quotes if q.get("price") is not None}
+
+    for alert in alerts:
+        price = price_by_ticker.get(alert.ticker)
+        if price is None:
+            continue
+        crossed = (
+            (alert.condition == "ABOVE" and price >= alert.target_price)
+            or (alert.condition == "BELOW" and price <= alert.target_price)
+        )
+        if crossed:
+            logger.info(
+                f"Price alert triggered: {alert.ticker} {alert.condition} "
+                f"{alert.target_price} (now {price})"
+            )
+            _alert_store.mark_triggered(alert.id, price)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -359,6 +430,12 @@ class StockCompareRequest(BaseModel):
 class WatchlistAddRequest(BaseModel):
     ticker: str
     notes: Optional[str] = None
+
+
+class AlertCreateRequest(BaseModel):
+    ticker: str
+    condition: Literal["ABOVE", "BELOW"]
+    target_price: float
 
 
 class PortfolioHoldingRequest(BaseModel):
@@ -649,6 +726,41 @@ def remove_from_watchlist(ticker: str):
         raise HTTPException(503, "Watchlist store not initialized.")
     items = _watchlist_store.remove(ticker)
     return {"watchlist": [i.model_dump() for i in items]}
+
+
+@app.get("/api/watchlist/quotes")
+def get_watchlist_quotes():
+    """Live price snapshot for every watchlist ticker — a cheap yfinance
+    fast_info fetch (see agents/stock/quote_fetcher.py), not the full
+    research pipeline. Adapted from OpenStock's getQuote()/getWatchlistData()
+    pattern (docs/researchStockSolutions.md)."""
+    if _watchlist_store is None:
+        raise HTTPException(503, "Watchlist store not initialized.")
+    tickers = [i.ticker for i in _watchlist_store.load()]
+    return {"quotes": get_quotes(tickers)}
+
+
+@app.get("/api/alerts")
+def get_alerts():
+    if _alert_store is None:
+        raise HTTPException(503, "Alert store not initialized.")
+    return {"alerts": [a.model_dump() for a in _alert_store.load()]}
+
+
+@app.post("/api/alerts")
+def create_alert(request: AlertCreateRequest):
+    if _alert_store is None:
+        raise HTTPException(503, "Alert store not initialized.")
+    items = _alert_store.add(request.ticker, request.condition, request.target_price)
+    return {"alerts": [a.model_dump() for a in items]}
+
+
+@app.delete("/api/alerts/{alert_id}")
+def delete_alert(alert_id: str):
+    if _alert_store is None:
+        raise HTTPException(503, "Alert store not initialized.")
+    items = _alert_store.remove(alert_id)
+    return {"alerts": [a.model_dump() for a in items]}
 
 
 @app.get("/api/portfolio")
@@ -1459,6 +1571,7 @@ def interview_answer(request: AnswerRequest):
             conversation_history=request.conversation_history,
             answer_style=request.answer_style,
             images=request.images,
+            document_ids=request.document_ids,
         )
     except Exception as e:
         logger.error(f"live_interview_coach.apply failed: {e}")
@@ -1476,6 +1589,10 @@ def interview_answer(request: AnswerRequest):
                 # couldn't use it (§2.1) — Pluely should tell the candidate
                 # their screenshot was dropped rather than silently ignore it.
                 "images_ignored": result.images_ignored,
+                # per-document, per-page traceability for grounded claims —
+                # see docs/designInterviewTool.md "Full Plan: Per-Document
+                # Selection + Source Traceability".
+                "citations": [c.model_dump() for c in result.citations],
             },
         }
         yield f"data: {json.dumps(final)}\n\n"
@@ -1529,6 +1646,41 @@ def delete_interview_answer_bank_entry(candidate_id: str, entry_id: str):
     if not memory.delete_answer_bank_entry(entry_id):
         raise HTTPException(404, f"Answer-bank entry '{entry_id}' not found.")
     return {"deleted": entry_id}
+
+
+@app.get("/v1/interview/documents/{candidate_id}")
+def list_interview_documents(candidate_id: str):
+    """Backs the desktop document-library panel — includes each document's
+    derived `stale` flag (content changed since last indexed)."""
+    memory = _get_interview_memory(candidate_id)
+    return {"documents": [d.model_dump() | {"stale": d.stale} for d in memory.list_documents()]}
+
+
+@app.post("/v1/interview/documents/{candidate_id}", response_model=DocumentUploadResult)
+async def upload_interview_document(
+    candidate_id: str,
+    file: UploadFile = File(...),
+    doc_type: DocumentType = Form("candidate_document"),
+):
+    """Ingest one document into the candidate's RAG corpus (resume, project
+    write-up, incident postmortem, seed question, ...) — per-page parsed and
+    chunked, magika-verified against its extension before parsing. Uploading
+    the same filename again re-embeds only if its content actually changed
+    (see InterviewMemoryStore.add_document / DocumentRecord staleness)."""
+    memory = _get_interview_memory(candidate_id)
+    content = await file.read()
+    try:
+        return memory.add_document(file.filename, doc_type, content)
+    except UnsupportedDocumentError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/v1/interview/documents/{candidate_id}/{doc_id}")
+def delete_interview_document(candidate_id: str, doc_id: str):
+    memory = _get_interview_memory(candidate_id)
+    if not memory.delete_document(doc_id):
+        raise HTTPException(404, f"Document '{doc_id}' not found.")
+    return {"deleted": doc_id}
 
 
 @app.get("/v1/interview/questions/{candidate_id}")

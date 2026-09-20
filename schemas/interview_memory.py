@@ -13,6 +13,7 @@ integration.
 """
 
 from typing import Literal, Optional
+
 from pydantic import BaseModel, Field
 
 # Re-exported for backward compatibility — these moved to schemas/answer_common.py
@@ -24,6 +25,7 @@ from schemas.answer_common import AnswerStyle, ImageAttachment, MatchedSource  #
 
 AnswerBankCategory = Literal["story", "prepared_answer", "talking_point"]
 AssessmentSource = Literal["llm_judge", "candidate_override"]
+DocumentType = Literal["resume", "candidate_document", "seed_question", "answer_bank_manual"]
 
 
 class InterviewProfile(BaseModel):
@@ -54,6 +56,42 @@ class AnswerBankEntryCreate(BaseModel):
     category: AnswerBankCategory = "talking_point"
     tags: list[str] = Field(default_factory=list)
     images: list[ImageAttachment] = Field(default_factory=list)
+
+
+class DocumentRecord(BaseModel):
+    """Registry entry for one ingested document — see docs/designInterviewTool.md's
+    "RAG / Document Ingestion Architecture" section for the full design.
+
+    `doc_id` is a UUID assigned once per logical document (per candidate +
+    filename), not derived from content — re-uploading an edited version of
+    the same file keeps the same `doc_id` so citations/graph edges pointing
+    at it stay valid; only its vectors need re-indexing (see staleness
+    fields below).
+    """
+    doc_id: str
+    candidate_id: str
+    filename: str
+    doc_type: DocumentType
+    page_count: int = 0
+    ingested_at: str = ""
+
+    # Staleness tracking (docs/designInterviewTool.md "Staleness tracking" —
+    # lets the app know when a document's vectors/graph edges no longer
+    # match its current content, instead of silently serving stale answers).
+    content_hash: str = ""
+    source_modified_at: str = ""
+    last_indexed_at: str = ""
+    last_graph_synced_at: str = ""
+
+    @property
+    def stale(self) -> bool:
+        return bool(self.source_modified_at) and self.source_modified_at > self.last_indexed_at
+
+
+class DocumentUploadResult(BaseModel):
+    document: DocumentRecord
+    chunks_indexed: int
+    reindexed: bool = False  # true if this replaced an existing doc_id's content
 
 
 class SkillApplyRequest(BaseModel):
@@ -118,11 +156,34 @@ class TopicSummary(BaseModel):
     notes: str = ""
 
 
+class DocumentChunkMatch(BaseModel):
+    """One retrieved chunk of an ingested document, with enough on it to
+    build both a MatchedSource (for the graph edge) and a Citation (for
+    display) without a second lookup."""
+    doc_id: str
+    filename: str
+    doc_type: DocumentType
+    page_number: Optional[int] = None
+    chunk_text: str
+    content_hash_at_citation: str = ""
+
+
 class RetrievedContext(BaseModel):
     """Context assembled for the answer-generation step."""
     matched_answer_bank: list[AnswerBankEntry] = Field(default_factory=list)
+    matched_documents: list[DocumentChunkMatch] = Field(default_factory=list)
     topic_summary: Optional[TopicSummary] = None
     related_topic_summaries: list[TopicSummary] = Field(default_factory=list)
+
+
+class Citation(BaseModel):
+    """Display-shaped pointer back to the exact source of a claim in an answer."""
+    doc_id: str
+    filename: str
+    doc_type: DocumentType
+    page_number: Optional[int] = None
+    chunk_excerpt: str = ""
+    stale: bool = False  # source document has changed since this citation was made
 
 
 class AnswerRequest(BaseModel):
@@ -133,6 +194,11 @@ class AnswerRequest(BaseModel):
     conversation_history: list[dict] = Field(default_factory=list)
     answer_style: AnswerStyle = Field(default_factory=AnswerStyle)
     images: list[ImageAttachment] = Field(default_factory=list)  # §2.1 — a live screenshot, ephemeral
+    # RAG scoping control (docs/designInterviewTool.md "Full Plan: Per-Document
+    # Selection + Source Traceability"). None/empty = search the whole
+    # candidate corpus (current behavior); non-empty = restrict retrieval to
+    # exactly these doc_ids.
+    document_ids: Optional[list[str]] = None
 
 
 class AnswerResult(BaseModel):
@@ -142,3 +208,6 @@ class AnswerResult(BaseModel):
     topic: str = "uncategorized"
     question_record_id: str = ""
     images_ignored: bool = False  # true if images were sent but the configured model couldn't use them
+    # Traceability: same underlying retrieval hits as matched_sources, shaped
+    # for display — "which page of which document backs this claim, if any."
+    citations: list[Citation] = Field(default_factory=list)

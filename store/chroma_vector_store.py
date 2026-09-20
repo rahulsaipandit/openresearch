@@ -31,13 +31,26 @@ logger = logging.getLogger(__name__)
 
 
 class ChromaVectorStore:
-    def __init__(self, path: Path | str, collection_name: str):
+    def __init__(
+        self, path: Path | str, collection_name: str, embedding_function: Optional[Any] = None
+    ):
+        """`embedding_function`, when given, replaces chromadb's bundled
+        default (ONNX MiniLM) — e.g. store/embedding_functions.py's
+        NomicEmbeddingFunction. Kept as an explicit opt-in constructor arg
+        (not a config global) since switching a collection's embedding
+        function requires a one-time re-embed migration — see
+        scripts/reembed_interview_memory.py and docs/designInterviewTool.md's
+        "Embedding model" section — not something to silently pick up."""
         import chromadb
 
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self.path))
-        self._collection = self._client.get_or_create_collection(collection_name)
+        self._embedding_function = embedding_function
+        kwargs: dict[str, Any] = {}
+        if embedding_function is not None:
+            kwargs["embedding_function"] = embedding_function
+        self._collection = self._client.get_or_create_collection(collection_name, **kwargs)
 
     def _upsert_one(self, doc_id: str, text: str, metadata: dict[str, Any]) -> None:
         if not text.strip():
@@ -63,6 +76,20 @@ class ChromaVectorStore:
 
     def _query_texts(self, query_text: str, n_results: int, where: dict[str, Any]) -> dict[str, Any]:
         return self._collection.query(query_texts=[query_text], n_results=n_results, where=where)
+
+    def _query_embedding(
+        self, query_embedding: list[float], n_results: int, where: dict[str, Any]
+    ) -> dict[str, Any]:
+        """For an asymmetric embedding function (e.g. nomic-embed-text-v1.5's
+        search_document/search_query prefixes) — chromadb's collection.query()
+        always runs query_texts through the *same* embedding_function used
+        for .add(), so it can't apply a different query-side prefix on its
+        own. Subclasses that need that (see InterviewVectorStore._query)
+        embed the query text themselves via embedding_function.embed_query()
+        and pass the resulting vector here instead of raw text."""
+        return self._collection.query(
+            query_embeddings=[query_embedding], n_results=n_results, where=where
+        )
 
     def _get(self, where: dict[str, Any], limit: Optional[int] = None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"where": where}

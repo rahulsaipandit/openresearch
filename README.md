@@ -135,6 +135,28 @@ curl http://localhost:7842/api/health
 
 Full request/response contracts, a step-by-step curl walkthrough, and open integration items are in `docs/SETUP.md` (§8) and `docs/openresearch-integration-requirements.md`.
 
+## Running the desktop UI
+
+The desktop app (`desktop/`) is a Tauri + React frontend for the API server above. Start the backend first, then the UI in a separate terminal.
+
+**1. Start the backend** (from the repo root):
+
+```powershell
+.venv\Scripts\python.exe server.py
+```
+
+**2. Run the desktop app:**
+
+```powershell
+cd desktop
+npm install   # first time only
+npm run tauri dev
+```
+
+This launches the native Tauri window with the Vite dev server behind it, talking to the FastAPI backend at `http://127.0.0.1:7842`.
+
+To iterate on the frontend alone in a browser (skipping the native shell), use `npm run dev` instead and open the printed Vite URL — note that Tauri-specific APIs (via `@tauri-apps/api`) won't be available outside the native shell.
+
 ## Typical workflow
 
 1. Provide a plain English problem statement

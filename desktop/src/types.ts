@@ -154,6 +154,38 @@ export interface WatchlistResponse {
   watchlist: WatchlistItem[];
 }
 
+// ── Live quotes + price alerts (schemas/alert.py, agents/stock/quote_fetcher.py) ─
+// docs/researchStockSolutions.md — adapted from OpenStock's getQuote()/
+// checkStockAlerts() pattern, on a 5-minute poll instead of real-time push.
+
+export interface Quote {
+  ticker: string;
+  price?: number | null;
+  change?: number | null;
+  change_percent?: number | null;
+  currency?: string | null;
+}
+
+export interface QuotesResponse {
+  quotes: Quote[];
+}
+
+export interface PriceAlert {
+  id: string;
+  ticker: string;
+  condition: "ABOVE" | "BELOW";
+  target_price: number;
+  created_at: string;
+  active: boolean;
+  triggered: boolean;
+  triggered_at?: string | null;
+  triggered_price?: number | null;
+}
+
+export interface AlertsResponse {
+  alerts: PriceAlert[];
+}
+
 // ── Portfolio (schemas/portfolio.py, store/portfolio_store.py) ──────────────
 
 export interface PortfolioHolding {
@@ -409,6 +441,10 @@ export interface MatchedSource {
   id: string;
   title: string;
   category: string;
+  source_type?: "answer_bank" | "document";
+  doc_id?: string | null;
+  page_number?: number | null;
+  content_hash_at_citation?: string | null;
 }
 
 export interface QuestionRecord {
@@ -432,6 +468,53 @@ export interface QuestionRecord {
 
 export interface QuestionListResponse {
   questions: QuestionRecord[];
+}
+
+// ── Document RAG ingestion (docs/designInterviewTool.md) ────────────────────
+// Per-document selection + source traceability for the interview cognitive
+// memory's ingested-document corpus (resume, candidate write-ups, seed
+// questions, ...) — distinct from answer-bank entries and question history.
+
+export type DocumentType = "resume" | "candidate_document" | "seed_question" | "answer_bank_manual";
+
+export interface DocumentRecord {
+  doc_id: string;
+  candidate_id: string;
+  filename: string;
+  doc_type: DocumentType;
+  page_count: number;
+  ingested_at: string;
+  content_hash: string;
+  source_modified_at: string;
+  last_indexed_at: string;
+  last_graph_synced_at: string;
+  stale: boolean;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentRecord[];
+}
+
+export interface DocumentUploadResult {
+  document: DocumentRecord;
+  chunks_indexed: number;
+  reindexed: boolean;
+}
+
+export interface Citation {
+  doc_id: string;
+  filename: string;
+  doc_type: DocumentType;
+  page_number: number | null;
+  chunk_excerpt: string;
+  stale: boolean;
+}
+
+export interface InterviewAnswerResult {
+  answer_text: string;
+  matched_sources: MatchedSource[];
+  images_ignored: boolean;
+  citations: Citation[];
 }
 
 // ── Real Estate Research (schemas/realestate.py) ────────────────────────────

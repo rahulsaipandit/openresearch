@@ -120,6 +120,14 @@ interview_research:
 interview_memory:
   # Root of interview_memory/<candidate_id>/... and interview_memory_vectors/
   data_dir: data
+  # "default" = chromadb's bundled ONNX MiniLM (384-dim, no extra install).
+  # "nomic-embed-text-v1.5" = run in-process via sentence-transformers (see
+  # store/embedding_functions.py) — requires the optional
+  # `pip install openresearch[nomic-embeddings]` extra, and switching an
+  # existing installation requires a one-time re-embed migration first:
+  # `python scripts/reembed_interview_memory.py` (see docs/designInterviewTool.md
+  # "Embedding model: nomic-embed-text-v1.5, run in-process (no server)").
+  embedding_model: default
 
 
 # ── MCP (Model Context Protocol) ─────────────────────────────────────────────

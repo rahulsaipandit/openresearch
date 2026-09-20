@@ -23,6 +23,7 @@ from schemas.interview_memory import (
     AnswerResult,
     AnswerStyle,
     Assessment,
+    Citation,
     ImageAttachment,
     MatchedSource,
     QuestionRecord,
@@ -64,6 +65,7 @@ class LiveInterviewCoachSkill(Skill):
         conversation_history: Optional[list[dict]] = None,
         answer_style: Optional[AnswerStyle] = None,
         images: Optional[list[ImageAttachment]] = None,
+        document_ids: Optional[list[str]] = None,
     ) -> AnswerResult:
         """
         images (§2.1): a candidate's live screenshot, e.g. a system-design
@@ -73,11 +75,16 @@ class LiveInterviewCoachSkill(Skill):
         configured LLM can't use images (a local vision-incapable model),
         create_multimodal() degrades gracefully to a text-only answer and
         AnswerResult.images_ignored is set so the candidate can be told.
+
+        document_ids (docs/designInterviewTool.md RAG-scoping control):
+        None/empty searches the candidate's whole corpus of ingested
+        documents; a non-empty list restricts document grounding to exactly
+        those doc_ids.
         """
         answer_style = answer_style or AnswerStyle()
         conversation_history = conversation_history or []
         profile = memory.get_profile()
-        context = memory.retrieve_context(question)
+        context = memory.retrieve_context(question, document_ids=document_ids)
 
         system_prompt = self._build_system_prompt(profile, answer_style)
         user_prompt = self._build_user_prompt(context, conversation_history, question)
@@ -95,6 +102,27 @@ class LiveInterviewCoachSkill(Skill):
         matched_sources = [
             MatchedSource(id=e.id, title=e.title, category=e.category, images=e.images)
             for e in context.matched_answer_bank
+        ] + [
+            MatchedSource(
+                id=d.doc_id,
+                title=d.filename,
+                category=d.doc_type,
+                source_type="document",
+                doc_id=d.doc_id,
+                page_number=d.page_number,
+                content_hash_at_citation=d.content_hash_at_citation,
+            )
+            for d in context.matched_documents
+        ]
+        citations = [
+            Citation(
+                doc_id=d.doc_id,
+                filename=d.filename,
+                doc_type=d.doc_type,
+                page_number=d.page_number,
+                chunk_excerpt=d.chunk_text[:300],
+            )
+            for d in context.matched_documents
         ]
         provisional_topic = context.topic_summary.topic if context.topic_summary else "uncategorized"
 
@@ -116,6 +144,7 @@ class LiveInterviewCoachSkill(Skill):
             topic=record.topic,
             question_record_id=record.id,
             images_ignored=bool(images) and not images_used,
+            citations=citations,
         )
 
     def judge_and_record(
@@ -176,6 +205,17 @@ Depth: {_DEPTH_INSTRUCTIONS[answer_style.depth]}
                 f"[{e.category}] {e.title}:\n{e.content}" for e in context.matched_answer_bank
             )
             sections.append(f"## Candidate's own relevant answer-bank material\n{bank_text}")
+        if context.matched_documents:
+            doc_text = "\n\n".join(
+                f"[{d.filename}"
+                + (f", p.{d.page_number}" if d.page_number else "")
+                + f"]:\n{d.chunk_text}"
+                for d in context.matched_documents
+            )
+            sections.append(
+                "## Candidate's ingested documents (resume, write-ups, etc.) — ground "
+                f"technical and behavioral specifics in this, not invented detail\n{doc_text}"
+            )
         if context.topic_summary and context.topic_summary.notes:
             sections.append(
                 f"## Coaching notes on this topic ({context.topic_summary.topic}, "

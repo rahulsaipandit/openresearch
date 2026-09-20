@@ -30,6 +30,8 @@ those are not being merged.
 """
 
 import base64
+import hashlib
+import json
 import logging
 import re
 import shutil
@@ -39,12 +41,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from memory import document_ingestion
 from memory.interview_graph import CandidateGraph
 from memory.interview_vector_store import InterviewVectorStore
 from memory.markdown_frontmatter import read_markdown_file, write_markdown_file
 from schemas.interview_memory import (
-    Assessment,
     AnswerBankEntry,
+    Assessment,
+    DocumentChunkMatch,
+    DocumentRecord,
+    DocumentType,
+    DocumentUploadResult,
     ImageAttachment,
     InterviewProfile,
     MatchedSource,
@@ -112,7 +119,14 @@ class InterviewMemoryStore:
         self.topics_dir = self.root / "topics"
         self.assessments_dir = self.root / "assessments"
         self.questions_dir = self.root / "questions"
-        for d in (self.answer_bank_dir, self.topics_dir, self.assessments_dir, self.questions_dir):
+        self.documents_dir = self.root / "documents"
+        for d in (
+            self.answer_bank_dir,
+            self.topics_dir,
+            self.assessments_dir,
+            self.questions_dir,
+            self.documents_dir,
+        ):
             d.mkdir(parents=True, exist_ok=True)
         self.profile_path = self.root / "profile.md"
         self.graph = CandidateGraph(self.root / "graph.json")
@@ -297,6 +311,123 @@ class InterviewMemoryStore:
             return doc_id.split(":")[-1]
         return None
 
+    # ── Documents (RAG ingestion — docs/designInterviewTool.md) ──────────────
+    #
+    # A "document" is a resume/candidate-write-up/seed-question file, ingested
+    # per-page (via memory/document_ingestion.py) and embedded as one chunk
+    # per page-window with a stable doc_id in its metadata — distinct from
+    # answer_bank entries (hand-written, no file/page) and questions
+    # (append-only Q&A log). See DocumentRecord's docstring for the identity
+    # and staleness-tracking design.
+
+    def _document_registry_path(self, doc_id: str) -> Path:
+        return self.documents_dir / f"{doc_id}.json"
+
+    def _document_original_path(self, doc_id: str, ext: str) -> Path:
+        return self.documents_dir / f"{doc_id}_original{ext}"
+
+    def _find_document_by_filename(self, filename: str) -> Optional[DocumentRecord]:
+        """Same filename = same logical document slot — this is what lets a
+        re-upload of an edited file update the existing doc_id in place
+        instead of creating a duplicate (see DocumentRecord docstring)."""
+        for record in self.list_documents():
+            if record.filename == filename:
+                return record
+        return None
+
+    def _save_document_record(self, record: DocumentRecord) -> None:
+        self._document_registry_path(record.doc_id).write_text(
+            json.dumps(record.model_dump(), indent=2), encoding="utf-8"
+        )
+
+    def add_document(
+        self, filename: str, doc_type: DocumentType, content: bytes
+    ) -> DocumentUploadResult:
+        """Ingest (or re-ingest) one document. Re-embedding only happens when
+        the content actually changed since last ingest (content_hash
+        mismatch) — an unchanged re-upload is a cheap no-op that still
+        refreshes the stored original file."""
+        with self._lock:
+            ext = Path(filename).suffix
+            content_hash = hashlib.sha256(content).hexdigest()
+            existing = self._find_document_by_filename(filename)
+            doc_id = existing.doc_id if existing else uuid.uuid4().hex[:16]
+            content_changed = existing is None or existing.content_hash != content_hash
+
+            self._document_original_path(doc_id, ext).write_bytes(content)
+
+            if content_changed:
+                pages = document_ingestion.extract_pages(self._document_original_path(doc_id, ext))
+                chunks = document_ingestion.chunk_pages(pages)
+                chunks_indexed = 0
+                if self.vector_store:
+                    if existing:
+                        self.vector_store.delete_document_chunks(self.candidate_id, doc_id)
+                    chunks_indexed = self.vector_store.add_document_chunks(
+                        self.candidate_id,
+                        doc_id,
+                        filename,
+                        doc_type,
+                        [(c.page_number, c.chunk_index, c.text) for c in chunks],
+                    )
+                page_count = len(pages)
+                now = _now_iso()
+                source_modified_at = now
+                last_indexed_at = now
+            else:
+                chunks_indexed = 0
+                page_count = existing.page_count
+                source_modified_at = existing.source_modified_at
+                last_indexed_at = existing.last_indexed_at
+
+            record = DocumentRecord(
+                doc_id=doc_id,
+                candidate_id=self.candidate_id,
+                filename=filename,
+                doc_type=doc_type,
+                page_count=page_count,
+                ingested_at=existing.ingested_at if existing else _now_iso(),
+                content_hash=content_hash,
+                source_modified_at=source_modified_at,
+                last_indexed_at=last_indexed_at,
+                last_graph_synced_at=existing.last_graph_synced_at if existing else "",
+            )
+            self._save_document_record(record)
+            return DocumentUploadResult(
+                document=record,
+                chunks_indexed=chunks_indexed,
+                reindexed=bool(existing) and content_changed,
+            )
+
+    def list_documents(self) -> list[DocumentRecord]:
+        records = []
+        for path in sorted(self.documents_dir.glob("*.json")):
+            try:
+                records.append(DocumentRecord(**json.loads(path.read_text(encoding="utf-8"))))
+            except Exception as e:
+                logger.warning(f"Skipping unreadable document registry entry {path.name}: {e}")
+        return records
+
+    def get_document(self, doc_id: str) -> Optional[DocumentRecord]:
+        path = self._document_registry_path(doc_id)
+        if not path.exists():
+            return None
+        return DocumentRecord(**json.loads(path.read_text(encoding="utf-8")))
+
+    def delete_document(self, doc_id: str) -> bool:
+        with self._lock:
+            record = self.get_document(doc_id)
+            if not record:
+                return False
+            if self.vector_store:
+                self.vector_store.delete_document_chunks(self.candidate_id, doc_id)
+            self.graph.remove_node(f"document:{doc_id}")
+            self.graph.save()
+            for path in self.documents_dir.glob(f"{doc_id}_original*"):
+                path.unlink()
+            self._document_registry_path(doc_id).unlink(missing_ok=True)
+            return True
+
     # ── Questions (append-only) ─────────────────────────────────────────────
 
     def record_question(self, record: QuestionRecord) -> QuestionRecord:
@@ -340,7 +471,12 @@ class InterviewMemoryStore:
                 )
             self.graph.add_edge(f"question:{record.id}", f"topic:{record.topic}", "tests_topic")
             for source in record.matched_sources:
-                self.graph.add_edge(f"question:{record.id}", f"answer_bank:{source.id}", "grounded_by")
+                target = (
+                    f"document:{source.doc_id}"
+                    if source.source_type == "document" and source.doc_id
+                    else f"answer_bank:{source.id}"
+                )
+                self.graph.add_edge(f"question:{record.id}", target, "grounded_by")
             self.graph.save()
             return record
 
@@ -602,7 +738,18 @@ class InterviewMemoryStore:
             return None
         return ids[0].split(":")[-1]
 
-    def retrieve_context(self, query_text: str, topic: Optional[str] = None, n_results: int = 3) -> RetrievedContext:
+    def retrieve_context(
+        self,
+        query_text: str,
+        topic: Optional[str] = None,
+        n_results: int = 3,
+        document_ids: Optional[list[str]] = None,
+    ) -> RetrievedContext:
+        """`document_ids` is the RAG-scoping control (docs/designInterviewTool.md
+        "Full Plan: Per-Document Selection + Source Traceability") — when
+        given, document grounding is restricted to exactly those doc_ids;
+        when None/empty, all of the candidate's ingested documents are
+        searched (same "whole corpus" behavior as answer-bank retrieval)."""
         context = RetrievedContext()
         topic = topic or self._guess_topic(query_text)
         if topic:
@@ -614,6 +761,10 @@ class InterviewMemoryStore:
 
         if not self.vector_store:
             return context
+
+        context.matched_documents = self._retrieve_document_matches(
+            query_text, n_results=n_results, document_ids=document_ids
+        )
 
         result = self.vector_store.query(
             self.candidate_id, query_text, n_results=n_results, doc_type="answer_bank"
@@ -641,6 +792,38 @@ class InterviewMemoryStore:
 
         return context
 
+    def _retrieve_document_matches(
+        self, query_text: str, n_results: int, document_ids: Optional[list[str]]
+    ) -> list[DocumentChunkMatch]:
+        if not self.vector_store:
+            return []
+        if document_ids:
+            result = self.vector_store.query_documents(
+                self.candidate_id, query_text, doc_ids=document_ids, n_results=n_results
+            )
+        else:
+            result = self.vector_store.query(
+                self.candidate_id, query_text, n_results=n_results, doc_type="document"
+            )
+
+        matches = []
+        texts = result.get("documents", [[]])[0]
+        metadatas = result.get("metadatas", [[]])[0]
+        for text, meta in zip(texts, metadatas):
+            source_doc_id = meta.get("doc_id", "")
+            registry_entry = self.get_document(source_doc_id) if source_doc_id else None
+            matches.append(
+                DocumentChunkMatch(
+                    doc_id=source_doc_id,
+                    filename=meta.get("source_filename", ""),
+                    doc_type=meta.get("document_kind", "candidate_document"),
+                    page_number=meta.get("page_number"),
+                    chunk_text=text,
+                    content_hash_at_citation=registry_entry.content_hash if registry_entry else "",
+                )
+            )
+        return matches
+
     # ── Construction ─────────────────────────────────────────────────────────
 
     @classmethod
@@ -651,7 +834,7 @@ class InterviewMemoryStore:
             cfg = yaml.safe_load(f)
         mem_cfg = cfg.get("interview_memory", {})
         data_dir = mem_cfg.get("data_dir", "data")
-        vector_store = InterviewVectorStore(Path(data_dir) / "interview_memory_vectors")
+        vector_store = InterviewVectorStore.from_config(config_path)
         return cls(candidate_id, Path(data_dir) / "interview_memory", vector_store)
 
 
