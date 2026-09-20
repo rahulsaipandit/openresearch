@@ -33,6 +33,8 @@ Thumbs.db
 # Tooling state
 .zencoder/
 .zenflow/
+.claude/settings.local.json
+.claude/memory/
 
 # Desktop app (Tauri + Vite + Rust)
 desktop/node_modules/
