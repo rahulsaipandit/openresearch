@@ -366,9 +366,37 @@ A left-field culture-fit question — it's testing self-awareness about your tea
 
 ---
 
+### **Question 15: Generative Language Model (GLM) Experience**
+
+> *"Do you have recent experience related to generative language models (GLM)? If yes, please elaborate on your relevant role and experience."*
+
+This is a straightforward competency-check question, but it's also a trap for seniority: a weak answer lists tools ("I've used ChatGPT") or lists technologies without a role attached. The strong answer at every level anchors the experience to a concrete decision, system, or organizational outcome the candidate was accountable for — not just exposure.
+
+**Sr. Engineering Manager Response:**
+
+"Yes — over the last two years I've been hands-on leading my team through building and shipping an internal RAG-based support assistant on top of a hosted LLM (we evaluated GPT-4-class and Claude models directly). My role wasn't just sponsoring it — I did the initial architecture spike myself: prompt design, retrieval pipeline over our internal docs, and the evaluation harness we used to catch regressions before they reached users. I also drove the unglamorous but critical part: setting up an eval set of ~200 real support tickets so we could measure hallucination rate and answer quality release over release, instead of eyeballing outputs. That discipline is what got the team comfortable shipping model updates without a human in the loop for every change."
+
+**Director of Engineering Response:**
+
+"Yes. Across the three teams I directed, I sponsored and set technical direction for two separate GLM efforts: a customer-facing generative search feature, and an internal code-review assistant. My role was less about writing the prompts myself and more about the decisions that don't show up in any single team's backlog — I set the standard that every GLM-backed feature needed an offline eval suite and a shadow-mode rollout before it could go GA, because the failure mode with these systems isn't a crash, it's confidently wrong output, and that requires a different release discipline than we'd used before. I also made the vendor call — we standardized on one model provider across teams instead of letting each team pick independently — which cut our per-team integration and prompt-maintenance overhead significantly, and gave us a single place to manage cost, latency, and safety guardrails as the models themselves evolved underneath us."
+
+**VP of Engineering Response:**
+
+"Yes — this has been one of my primary areas of focus for the last several years, not a side project. I directed the build of a real-time multi-modal ingestion and inference platform that fused generative language models with audio, video, and physiological signal streams for a live-inference product, and separately set the org-wide strategy for how every product team at the company adopts GLMs, rather than leaving it to ad hoc, team-by-team experimentation. Concretely, that meant: establishing a central model evaluation and guardrail framework so teams weren't each reinventing hallucination and safety testing from scratch; building the security and compliance architecture — encryption, access controls, audit logging — for GLM outputs in from day one, because we operated under strict regulatory requirements; and making the buy-versus-build and single-vendor-versus-multi-vendor calls at the budget and risk level, weighing model capability against cost, latency, and vendor lock-in as the field moved quickly underneath us. The part I'd emphasize is that my role was making GLM adoption a governed, repeatable organizational capability — with a real evaluation and safety framework other teams could build on — rather than a single flagship project that happened to use one."
+
+**What Separates the Levels**
+
+| Dimension | Sr. Manager | Director | VP |
+| --- | --- | --- | --- |
+| **Nature of involvement** | Hands-on: architecture, prompt design, eval harness for one system | Sets standards (eval suites, shadow-mode rollout) and vendor strategy across teams | Sets org-wide GLM adoption strategy, governance, and compliance architecture across the business |
+| **What "experience" is anchored to** | A shipped system and the eval discipline that made it safe to iterate on | Cross-team consistency in release discipline and vendor consolidation | A repeatable, governed organizational capability, not a single project |
+| **Risk they emphasize** | Catching hallucination/regressions before users see them | Confidently-wrong output requiring different release discipline than traditional software | Regulatory, security, and vendor-lock-in risk managed at the budget/policy level |
+
+---
+
 ### **Interview Summary & Coaching**
 
-Across these fourteen questions pulled from real interview loops, the pattern that separates Sr. Manager, Director, and VP answers to the *exact same question* is consistent:
+Across these fifteen questions pulled from real interview loops, the pattern that separates Sr. Manager, Director, and VP answers to the *exact same question* is consistent:
 
 * **Scope widens with altitude.** A Sr. Manager answers from their own team's experience; a Director answers from patterns across several teams they oversee; a VP answers from the whole org's systems and how it connects to the business and the board.
 * **The unit of pride/ownership shifts from technical outcome to durable system.** Notice how "what are you proud of" moves from a clean technical fix, to a cross-team migration that didn't disrupt delivery, to a platform whose *operating model* outlived the original build.
