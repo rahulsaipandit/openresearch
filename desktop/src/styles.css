@@ -275,6 +275,13 @@ body {
   margin: 12px 0;
 }
 
+.explainer-body .formula-inline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
 .explainer-body .formula {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   background: var(--bg);

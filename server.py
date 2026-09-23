@@ -20,6 +20,7 @@ Endpoints:
   POST /api/portfolio           Add/update a holding (ticker, shares, cost basis)
   DELETE /api/portfolio/{ticker} Remove a holding
   POST /api/portfolio-optimize  Single-period rebalance optimization over current holdings
+  POST /api/pairs-analyze       Kalman-filtered adaptive hedge ratio + signal for a stock pair
   POST /api/board-session       Run executive board pipeline
   POST /api/board-health        Test integration connections
   GET  /api/board-status/{id}   Poll async board session status
@@ -68,6 +69,7 @@ from agents.stock.sec_qa import SECQAAgent
 from agents.stock.document_insights import DocumentInsightsAgent
 from agents.stock.xbrl_fallback import XBRLFallbackAgent
 from agents.stock.portfolio_optimizer import PortfolioOptimizerAgent
+from agents.stock.pairs_trading import PairsTradingAgent
 from agents.stock.quote_fetcher import get_quotes_cached
 from pipelines.stock_pipeline import StockResearchPipeline
 from pipelines.primer_pipeline import ResearchPrimerPipeline
@@ -80,6 +82,7 @@ from schemas.comparison import ComparisonBrief
 from schemas.watchlist import WatchlistItem
 from schemas.alert import PriceAlert
 from schemas.portfolio import PortfolioOptimizeRequest, PortfolioOptimizationResult
+from schemas.pairs import PairsAnalysisRequest, PairsAnalysisResult
 from schemas.primer import PrimerPipelineInput, ResearchPrimer
 from schemas.sec_insights import SECAnswer
 from schemas.document_insights import DocumentInsightAnswer
@@ -135,6 +138,7 @@ _trend_analyst:       Optional[TrendAnalystAgent] = None
 _sec_qa_agent:        Optional[SECQAAgent] = None
 _document_insights:   Optional[DocumentInsightsAgent] = None
 _portfolio_optimizer: Optional[PortfolioOptimizerAgent] = None
+_pairs_trading_agent: Optional[PairsTradingAgent] = None
 
 # ── Persistent stores (initialized at startup) ────────────────────────────────
 _profile_store:     Optional[ProfileStore] = None
@@ -190,6 +194,7 @@ async def lifespan(app: FastAPI):
     """Initialize pipelines and stores on startup, clean up on shutdown."""
     global _stock_pipeline, _primer_pipeline, _board_pipeline, _interview_pipeline
     global _query_router, _comparison_analyst, _trend_analyst, _sec_qa_agent, _document_insights
+    global _pairs_trading_agent
     global _profile_store, _app_store, _skills_store, _watchlist_store
     global _portfolio_store, _portfolio_optimizer
     global _alert_store, _alert_poll_task
@@ -214,7 +219,8 @@ async def lifespan(app: FastAPI):
         _query_router        = QueryRouterAgent(_stock_llm)
         _comparison_analyst  = ComparisonAnalystAgent(_stock_llm)
         _trend_analyst       = TrendAnalystAgent()
-        logger.info("Query router, comparison analyst, and trend analyst ready.")
+        _pairs_trading_agent = PairsTradingAgent()
+        logger.info("Query router, comparison analyst, trend analyst, and pairs trading agent ready.")
     except Exception as e:
         logger.warning(f"Query router / comparison / trend init failed: {e}")
 
@@ -799,6 +805,16 @@ def optimize_portfolio(request: PortfolioOptimizeRequest):
         raise HTTPException(400, "Portfolio is empty — add holdings before optimizing.")
     try:
         return _portfolio_optimizer.optimize(holdings, request)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/pairs-analyze", response_model=PairsAnalysisResult)
+def analyze_pairs(request: PairsAnalysisRequest):
+    if _pairs_trading_agent is None:
+        raise HTTPException(503, "Pairs trading agent not initialized.")
+    try:
+        return _pairs_trading_agent.analyze(request)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

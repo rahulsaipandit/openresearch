@@ -238,6 +238,45 @@ export interface PortfolioOptimizationResult {
   factor_exposure?: FactorExposure | null;
 }
 
+// ── Pairs Trading (schemas/pairs.py, agents/stock/pairs_trading.py) ────────
+
+export interface PairsAnalysisRequest {
+  ticker_y: string;
+  ticker_x: string;
+  lookback?: string;
+  capital?: number;
+  entry_z?: number;
+}
+
+export interface KalmanHistoryPoint {
+  date: string;
+  hedge_ratio: number;
+  spread: number;
+  z_score: number;
+}
+
+export interface PairsAnalysisResult {
+  as_of_date: string;
+  ticker_y: string;
+  ticker_x: string;
+  n_observations: number;
+  engle_granger_pvalue: number;
+  cointegrated: boolean;
+  adf_pvalue: number;
+  stationary_now: boolean;
+  half_life_days: number | null;
+  hedge_ratio: number;
+  intercept: number;
+  spread: number;
+  z_score: number;
+  observation_noise: number;
+  signal: "long_spread" | "short_spread" | "flat";
+  shares_y: number;
+  shares_x: number;
+  warnings: string[];
+  history: KalmanHistoryPoint[];
+}
+
 // /api/query's four possible shapes, discriminated by an explicit
 // `result_type` field the backend adds only on this endpoint's responses
 // (server.py's stock_query()) — not part of ResearchBrief/ComparisonBrief's

@@ -12,6 +12,8 @@ import type {
   DocumentUploadResult,
   InterviewAnswerResult,
   InterviewPrepBrief,
+  PairsAnalysisRequest,
+  PairsAnalysisResult,
   PortfolioOptimizationResult,
   PortfolioOptimizeRequest,
   PortfolioResponse,
@@ -164,6 +166,15 @@ export function optimizePortfolio(options: PortfolioOptimizeRequest = {}) {
   return request<PortfolioOptimizationResult>("/api/portfolio-optimize", {
     method: "POST",
     body: JSON.stringify(options),
+  });
+}
+
+// ── Pairs Trading ─────────────────────────────────────────────────────────────
+
+export function analyzePairs(pairsRequest: PairsAnalysisRequest) {
+  return request<PairsAnalysisResult>("/api/pairs-analyze", {
+    method: "POST",
+    body: JSON.stringify(pairsRequest),
   });
 }
 

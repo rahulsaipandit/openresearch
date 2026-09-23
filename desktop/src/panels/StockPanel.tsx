@@ -5,6 +5,7 @@ import { CitedText } from "../components/CitedText";
 import { DataTable } from "../components/DataTable";
 import { WatchlistPanel } from "./WatchlistPanel";
 import { PortfolioPanel } from "./PortfolioPanel";
+import { PairsTradingPanel } from "./PairsTradingPanel";
 import { ComparisonPanel } from "./ComparisonPanel";
 import { TrendPanel } from "./TrendPanel";
 import { PrimerPanel } from "./PrimerPanel";
@@ -17,6 +18,7 @@ type SubTab =
   | "dashboard"
   | "watchlist"
   | "portfolio"
+  | "pairs"
   | "compare"
   | "trend"
   | "primer"
@@ -71,7 +73,7 @@ export function StockPanel() {
     <div className="panel">
       <div className="sub-nav no-print">
         {(
-          ["research", "dashboard", "watchlist", "portfolio", "compare", "trend", "primer", "sec", "documents"] as SubTab[]
+          ["research", "dashboard", "watchlist", "portfolio", "pairs", "compare", "trend", "primer", "sec", "documents"] as SubTab[]
         ).map((t) => (
           <button key={t} type="button" className={subTab === t ? "active" : ""} onClick={() => setSubTab(t)}>
             {t === "sec" ? "SEC Insights" : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -103,6 +105,7 @@ export function StockPanel() {
       {subTab === "dashboard" && <DashboardPanel />}
       {subTab === "watchlist" && <WatchlistPanel />}
       {subTab === "portfolio" && <PortfolioPanel />}
+      {subTab === "pairs" && <PairsTradingPanel />}
       {subTab === "compare" && <ComparisonPanel />}
       {subTab === "trend" && <TrendPanel />}
       {subTab === "primer" && <PrimerPanel />}
