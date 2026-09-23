@@ -37,6 +37,21 @@ class TradeRecommendation(BaseModel):
     est_holding_cost: float
 
 
+class FactorExposure(BaseModel):
+    """
+    PCA + Random Matrix Theory diversification check — see
+    agents/stock/factor_decomposition.py and
+    docs/Stocks/designStock_FactorDecompositionRMT.md.
+    """
+    n_tickers: int
+    n_observations: int
+    mp_noise_threshold: float             # Marchenko-Pastur upper edge; eigenvalues above this are real factors
+    n_significant_factors: int            # eigenvalues clearing the MP threshold
+    variance_explained_by_factor: list[float]  # top eigenvalues' share of total variance, descending
+    top_factor_variance_share: float      # variance_explained_by_factor[0]
+    concentration_warning: bool           # True when the top factor dominates (portfolio is one bet in a costume)
+
+
 class PortfolioOptimizationResult(BaseModel):
     as_of_date: str
     tickers: list[str]
@@ -45,3 +60,4 @@ class PortfolioOptimizationResult(BaseModel):
     total_est_cost: float
     trades: list[TradeRecommendation]
     notes: list[str]
+    factor_exposure: Optional[FactorExposure] = None

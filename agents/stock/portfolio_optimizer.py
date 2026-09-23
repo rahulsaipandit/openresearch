@@ -19,6 +19,7 @@ import cvxpy as cp
 import numpy as np
 import yfinance as yf
 
+from agents.stock.factor_decomposition import FactorDecompositionAgent
 from schemas.portfolio import (
     PortfolioHolding,
     PortfolioOptimizationResult,
@@ -34,6 +35,9 @@ _COV_RIDGE = 1e-6  # numerical floor so Sigma stays PSD for cvxpy
 
 
 class PortfolioOptimizerAgent:
+    def __init__(self):
+        self._factor_agent = FactorDecompositionAgent()
+
     def optimize(
         self,
         holdings: list[PortfolioHolding],
@@ -59,9 +63,15 @@ class PortfolioOptimizerAgent:
             raise ValueError("Portfolio has no positive market value to optimize against.")
         current_weights = np.array([current_values[t] / total_value for t in valid])
 
-        mu, sigma = self._expected_return_and_cov(valid, returns)
+        mu, sigma, return_matrix = self._expected_return_and_cov(valid, returns)
 
         target_weights = self._solve(mu, sigma, current_weights, request)
+
+        try:
+            factor_exposure = self._factor_agent.analyze(return_matrix)
+        except ValueError as e:
+            logger.warning(f"Factor decomposition skipped: {e}")
+            factor_exposure = None
 
         trades = []
         total_cost = 0.0
@@ -97,6 +107,7 @@ class PortfolioOptimizerAgent:
             total_est_cost=round(total_cost, 6),
             trades=trades,
             notes=notes,
+            factor_exposure=factor_exposure,
         )
 
     def _fetch_returns(self, tickers: list[str]) -> tuple[dict[str, float], dict[str, np.ndarray]]:
@@ -118,13 +129,13 @@ class PortfolioOptimizerAgent:
 
     def _expected_return_and_cov(
         self, tickers: list[str], returns: dict[str, np.ndarray]
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         min_len = min(len(returns[t]) for t in tickers)
         matrix = np.column_stack([returns[t][-min_len:] for t in tickers])  # rows=days, cols=tickers
         mu = matrix.mean(axis=0) * TRADING_DAYS_PER_YEAR
         sigma = np.cov(matrix, rowvar=False) * TRADING_DAYS_PER_YEAR
         sigma = sigma + _COV_RIDGE * np.eye(len(tickers))
-        return mu, sigma
+        return mu, sigma, matrix
 
     def _solve(
         self,
@@ -150,7 +161,9 @@ class PortfolioOptimizerAgent:
             constraints += [w >= 0, w <= request.max_position_weight]
 
         problem = cp.Problem(objective, constraints)
-        problem.solve(solver=cp.ECOS)
+        # Clarabel: cvxpy's actively-maintained default SOCP solver, bundled with
+        # cvxpy itself (unlike ECOS, which newer cvxpy releases no longer ship).
+        problem.solve(solver=cp.CLARABEL)
 
         if w.value is None:
             raise ValueError(f"Portfolio optimization did not converge (status: {problem.status}).")

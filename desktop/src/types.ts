@@ -217,6 +217,16 @@ export interface TradeRecommendation {
   est_holding_cost: number;
 }
 
+export interface FactorExposure {
+  n_tickers: number;
+  n_observations: number;
+  mp_noise_threshold: number;
+  n_significant_factors: number;
+  variance_explained_by_factor: number[];
+  top_factor_variance_share: number;
+  concentration_warning: boolean;
+}
+
 export interface PortfolioOptimizationResult {
   as_of_date: string;
   tickers: string[];
@@ -225,6 +235,7 @@ export interface PortfolioOptimizationResult {
   total_est_cost: number;
   trades: TradeRecommendation[];
   notes: string[];
+  factor_exposure?: FactorExposure | null;
 }
 
 // /api/query's four possible shapes, discriminated by an explicit

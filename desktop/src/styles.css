@@ -235,6 +235,54 @@ body {
   margin-bottom: 12px;
 }
 
+.factor-exposure {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+}
+
+.factor-exposure h4 {
+  margin-top: 0;
+}
+
+.explainer {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.explainer summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.explainer-body {
+  margin-top: 10px;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.explainer-body h5 {
+  margin-bottom: 4px;
+}
+
+.explainer-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
+}
+
+.explainer-body .formula {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg);
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
 .clarification-banner {
   background: rgba(217, 119, 6, 0.15);
   border: 1px solid #d97706;
