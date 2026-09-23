@@ -55,6 +55,7 @@ class StockResearchPipeline:
         polygon_key: str = "",
         news_api_key: str = "",
         mcp: MCPClient | None = None,
+        data_dir: str = "data",
         verbose: bool = True,
     ):
         self.llm     = llm
@@ -65,6 +66,7 @@ class StockResearchPipeline:
             alpha_vantage_key=alpha_vantage_key,
             polygon_key=polygon_key,
             mcp=mcp,
+            data_dir=data_dir,
         )
         self.news_aggregator = NewsAggregatorAgent(
             news_api_key=news_api_key,
@@ -99,6 +101,7 @@ class StockResearchPipeline:
             polygon_key=sources.get("polygon_key", "") or "",
             news_api_key=sources.get("news_api_key", "") or "",
             mcp=mcp,
+            data_dir=stock_cfg.get("data_dir", "data"),
             verbose=cfg.get("server", {}).get("verbose", True),
         )
 
@@ -139,6 +142,7 @@ class StockResearchPipeline:
         market_structure_raw = raw_data.get("market_structure")  # None if Equibles not running
         technicals_raw       = raw_data.get("technicals")        # None if Equibles not running
         signals              = raw_data.get("signals")           # None if depth="quick"
+        options              = raw_data.get("options")           # None if depth="quick"
 
         # ── Backtest the deterministic signals (depth="full" only) ───────────
         # Source reference: https://arxiv.org/abs/2607.15414 — see
@@ -184,6 +188,7 @@ class StockResearchPipeline:
             technicals_raw=technicals_raw,
             signals=signals,
             backtest=backtest,
+            options=options,
         )
 
         if self.verbose:

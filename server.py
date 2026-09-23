@@ -71,12 +71,16 @@ from agents.stock.xbrl_fallback import XBRLFallbackAgent
 from agents.stock.portfolio_optimizer import PortfolioOptimizerAgent
 from agents.stock.pairs_trading import PairsTradingAgent
 from agents.stock.quote_fetcher import get_quotes_cached
+from agents.stock.earnings_call_summarizer import EarningsCallSummarizer
+from agents.stock.opportunity_radar import OpportunityRadarAgent
+from store.theme_store import ThemeStore
 from pipelines.stock_pipeline import StockResearchPipeline
 from pipelines.primer_pipeline import ResearchPrimerPipeline
 from pipelines.board_pipeline import ExecutiveBoardPipeline
 from pipelines.interview_pipeline import InterviewPipeline
 from pipelines.realestate_pipeline import RealEstatePipeline
-from schemas.stock import StockPipelineInput, ResearchBrief, TrendData
+from schemas.stock import StockPipelineInput, ResearchBrief, TrendData, EarningsCallSummary
+from schemas.opportunity_radar import OpportunityRadarResult
 from schemas.query import QueryRouterResult
 from schemas.comparison import ComparisonBrief
 from schemas.watchlist import WatchlistItem
@@ -136,6 +140,11 @@ _query_router:        Optional[QueryRouterAgent] = None
 _comparison_analyst:  Optional[ComparisonAnalystAgent] = None
 _trend_analyst:       Optional[TrendAnalystAgent] = None
 _sec_qa_agent:        Optional[SECQAAgent] = None
+_earnings_call_summarizer: Optional[EarningsCallSummarizer] = None
+_opportunity_radar_agent: Optional[OpportunityRadarAgent] = None
+_theme_store: Optional[ThemeStore] = None
+_opportunity_radar_task: Optional[asyncio.Task] = None
+_OPPORTUNITY_RADAR_INTERVAL_SECONDS = 86400  # once daily — see docs/Stocks/designStock_DashboardUI.md
 _document_insights:   Optional[DocumentInsightsAgent] = None
 _portfolio_optimizer: Optional[PortfolioOptimizerAgent] = None
 _pairs_trading_agent: Optional[PairsTradingAgent] = None
@@ -194,6 +203,8 @@ async def lifespan(app: FastAPI):
     """Initialize pipelines and stores on startup, clean up on shutdown."""
     global _stock_pipeline, _primer_pipeline, _board_pipeline, _interview_pipeline
     global _query_router, _comparison_analyst, _trend_analyst, _sec_qa_agent, _document_insights
+    global _earnings_call_summarizer
+    global _opportunity_radar_agent, _theme_store, _opportunity_radar_task
     global _pairs_trading_agent
     global _profile_store, _app_store, _skills_store, _watchlist_store
     global _portfolio_store, _portfolio_optimizer
@@ -283,6 +294,26 @@ async def lifespan(app: FastAPI):
         logger.warning(f"SEC Insights init failed: {e}")
 
     try:
+        _earnings_call_summarizer = EarningsCallSummarizer.from_config(CONFIG_PATH)
+        logger.info("Earnings Call Summarizer ready.")
+    except Exception as e:
+        logger.warning(f"Earnings Call Summarizer init failed: {e}")
+
+    try:
+        _opportunity_radar_agent = OpportunityRadarAgent.from_config(CONFIG_PATH)
+        _theme_store = ThemeStore.from_config(CONFIG_PATH)
+        _opportunity_radar_task = asyncio.create_task(_opportunity_radar_loop())
+        if _theme_store.latest() is None:
+            # No snapshot yet — don't make the first page load wait a full day.
+            asyncio.create_task(_run_opportunity_radar_logged())
+        logger.info(
+            f"Opportunity Radar ready — batch job runs every "
+            f"{_OPPORTUNITY_RADAR_INTERVAL_SECONDS}s (watchlist-driven)."
+        )
+    except Exception as e:
+        logger.warning(f"Opportunity Radar init failed: {e}")
+
+    try:
         _interview_vector_store = InterviewVectorStore.from_config(CONFIG_PATH)
         judge_agent = MemoryJudgeAgent(LLMClient.from_config(CONFIG_PATH))
         _live_interview_coach = LiveInterviewCoachSkill(LLMClient.from_config(CONFIG_PATH), judge_agent)
@@ -330,6 +361,8 @@ async def lifespan(app: FastAPI):
     logger.info("Server shutting down.")
     if _alert_poll_task is not None:
         _alert_poll_task.cancel()
+    if _opportunity_radar_task is not None:
+        _opportunity_radar_task.cancel()
 
 
 async def _alert_poll_loop():
@@ -370,6 +403,46 @@ async def _check_price_alerts():
                 f"{alert.target_price} (now {price})"
             )
             _alert_store.mark_triggered(alert.id, price)
+
+
+async def _opportunity_radar_loop():
+    """Runs for the lifetime of the app: every _OPPORTUNITY_RADAR_INTERVAL_SECONDS,
+    regenerate the Opportunity Radar snapshot over the current watchlist. See
+    docs/Stocks/designStock_DashboardUI.md for why this is a daily batch job
+    (not computed per page load) and why it's watchlist-driven."""
+    while True:
+        try:
+            await asyncio.sleep(_OPPORTUNITY_RADAR_INTERVAL_SECONDS)
+            await _run_opportunity_radar()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Opportunity Radar loop error: {e}", exc_info=True)
+
+
+async def _run_opportunity_radar() -> Optional[OpportunityRadarResult]:
+    if _opportunity_radar_agent is None or _theme_store is None or _watchlist_store is None:
+        return None
+    tickers = [item.ticker for item in _watchlist_store.load()]
+    if not tickers:
+        logger.info("Opportunity Radar skipped — watchlist is empty.")
+        return None
+    result = await asyncio.to_thread(_opportunity_radar_agent.generate, tickers)
+    _theme_store.save_snapshot(result)
+    logger.info(f"Opportunity Radar snapshot saved — {len(result.themes)} themes over {len(tickers)} tickers.")
+    return result
+
+
+async def _run_opportunity_radar_logged() -> None:
+    """Fire-and-forget wrapper for the immediate first-run kickoff in
+    lifespan() — unlike _opportunity_radar_loop, a bare asyncio.create_task()
+    here has no caller to propagate an exception to, so it must catch and log
+    its own failures or they'd only surface as asyncio's silent
+    "Task exception was never retrieved" warning on stderr."""
+    try:
+        await _run_opportunity_radar()
+    except Exception as e:
+        logger.error(f"Initial Opportunity Radar run failed: {e}", exc_info=True)
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -418,6 +491,11 @@ class SECInsightsRequest(BaseModel):
     ticker: str
     question: str
     force_refresh: bool = False   # re-ingest filings even if already cached
+
+
+class EarningsCallRequest(BaseModel):
+    ticker: str
+    quarter: Optional[str] = None   # "YYYYQ#", e.g. "2026Q2" — defaults to most recently reported
 
 
 class StockQueryRequest(BaseModel):
@@ -662,6 +740,62 @@ def sec_insights(request: SECInsightsRequest):
     except Exception as e:
         logger.error(f"SEC Insights failed for {request.ticker}: {e}", exc_info=True)
         raise HTTPException(500, f"SEC Insights error: {str(e)[:200]}")
+
+
+@app.post("/api/stock-earnings-call", response_model=EarningsCallSummary)
+def stock_earnings_call(request: EarningsCallRequest):
+    """
+    Earnings call summary — fetches the transcript (Alpha Vantage, optionally
+    enriched by Equibles if running) and returns an LLM summary (highlights,
+    guidance, management tone, notable Q&A). See
+    agents/stock/earnings_call_summarizer.py and docs/designStock_DashboardUI.md.
+    """
+    if _earnings_call_summarizer is None:
+        raise HTTPException(503, "Earnings Call Summarizer not initialized. Check config.yaml.")
+    if not request.ticker or len(request.ticker) > 15:
+        raise HTTPException(400, "Invalid ticker symbol.")
+
+    try:
+        summary = _earnings_call_summarizer.summarize(request.ticker, quarter=request.quarter)
+    except Exception as e:
+        logger.error(f"Earnings call summary failed for {request.ticker}: {e}", exc_info=True)
+        raise HTTPException(500, f"Earnings call summary error: {str(e)[:200]}")
+
+    if summary is None:
+        raise HTTPException(404, f"No earnings call transcript found for {request.ticker}.")
+    return summary
+
+
+@app.get("/api/opportunity-radar", response_model=OpportunityRadarResult)
+def opportunity_radar():
+    """
+    Returns the latest stored Opportunity Radar snapshot — a fast read, no
+    LLM call on page load. The snapshot itself is produced by a daily
+    background batch job over the current watchlist; see
+    docs/Stocks/designStock_DashboardUI.md and _opportunity_radar_loop().
+    """
+    if _theme_store is None:
+        raise HTTPException(503, "Opportunity Radar not initialized. Check config.yaml.")
+    result = _theme_store.latest()
+    if result is None:
+        raise HTTPException(404, "No Opportunity Radar snapshot yet — add tickers to your watchlist and try again shortly.")
+    return result
+
+
+@app.post("/api/opportunity-radar/refresh", response_model=OpportunityRadarResult)
+async def opportunity_radar_refresh():
+    """Manually trigger a new Opportunity Radar run (for testing — the daily
+    batch job covers normal operation)."""
+    if _opportunity_radar_agent is None or _theme_store is None:
+        raise HTTPException(503, "Opportunity Radar not initialized. Check config.yaml.")
+    try:
+        result = await _run_opportunity_radar()
+    except Exception as e:
+        logger.error(f"Opportunity Radar refresh failed: {e}", exc_info=True)
+        raise HTTPException(500, f"Opportunity Radar error: {str(e)[:200]}")
+    if result is None:
+        raise HTTPException(400, "Watchlist is empty — add tickers before running Opportunity Radar.")
+    return result
 
 
 def _run_comparison(ticker_a: str, ticker_b: str, depth: str) -> ComparisonBrief:

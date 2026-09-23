@@ -530,6 +530,12 @@ body {
   gap: 12px;
 }
 
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
 .priority {
   padding: 2px 8px;
   border-radius: 4px;

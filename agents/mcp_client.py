@@ -176,6 +176,19 @@ class MCPClient:
         """
         return self._equibles_call("get_technical_indicators", {"ticker": ticker.upper()})
 
+    def equibles_earnings_call_transcript(self, ticker: str, quarter: str | None = None) -> dict | None:
+        """
+        Earnings call transcript enrichment: verified speaker roles, the
+        linked 8-K/slide deck, and pre-extracted guidance statements.
+        Used as an optional enrichment layer on top of the Alpha Vantage
+        transcript fetch — see agents/stock/earnings_call_summarizer.py.
+        Returns: {transcript: [...], linked_8k_url, guidance: [...]}
+        """
+        args: dict = {"ticker": ticker.upper()}
+        if quarter:
+            args["quarter"] = quarter
+        return self._equibles_call("get_earnings_call_transcript", args)
+
     def equibles_search_sec_filings(
         self,
         ticker: str,

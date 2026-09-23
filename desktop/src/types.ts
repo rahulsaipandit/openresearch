@@ -14,6 +14,11 @@ export interface ValuationSummary {
   market_cap?: number | null;
   moat_assessment: string;
   key_metrics: Record<string, string>;
+  fifty_two_week_low?: number | null;
+  fifty_two_week_high?: number | null;
+  dividend_yield?: number | null;
+  volume?: number | null;
+  shares_outstanding?: number | null;
 }
 
 export interface SentimentSummary {
@@ -78,6 +83,58 @@ export interface TechnicalIndicators {
   trend_signal?: string | null;
 }
 
+export interface OptionsData {
+  put_call_volume_ratio?: number | null;
+  put_call_ratio_30d_avg?: number | null;
+  unusual_call_activity: boolean;
+  unusual_put_activity: boolean;
+  iv_skew?: number | null;
+  dominant_call_strike?: number | null;
+  dominant_put_strike?: number | null;
+  nearest_expiry?: string | null;
+  total_call_volume?: number | null;
+  total_put_volume?: number | null;
+  summary: string;
+}
+
+export interface EarningsCallSummary {
+  quarter?: string | null;
+  source: "alpha_vantage";
+  key_highlights: string[];
+  guidance: string[];
+  management_tone: "confident" | "cautious" | "mixed" | "defensive" | "neutral";
+  notable_qa: string[];
+  linked_8k_url?: string | null;
+}
+
+export interface ThemeEvidence {
+  ticker: string;
+  title: string;
+  source: string;
+  published_at: string;
+  url: string;
+}
+
+export interface ThemeTickerStance {
+  ticker: string;
+  stance: "benefit" | "pressured" | "mentioned";
+  mention_count: number;
+}
+
+export interface OpportunityTheme {
+  theme: string;
+  strength_score: number;
+  description: string;
+  tickers: ThemeTickerStance[];
+  evidence: ThemeEvidence[];
+}
+
+export interface OpportunityRadarResult {
+  generated_at: string;
+  universe: string[];
+  themes: OpportunityTheme[];
+}
+
 export interface ResearchBrief {
   ticker: string;
   company_name: string;
@@ -96,6 +153,7 @@ export interface ResearchBrief {
   institutional?: InstitutionalSnapshot | null;
   market_structure?: MarketStructureData | null;
   technicals?: TechnicalIndicators | null;
+  options?: OptionsData | null;
   sources: string[];
 }
 

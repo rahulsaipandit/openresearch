@@ -12,6 +12,7 @@ import { PrimerPanel } from "./PrimerPanel";
 import { SECInsightsPanel } from "./SECInsightsPanel";
 import { DocumentInsightsPanel } from "./DocumentInsightsPanel";
 import { DashboardPanel } from "./DashboardPanel";
+import { OpportunityRadarPanel } from "./OpportunityRadarPanel";
 
 type SubTab =
   | "research"
@@ -23,7 +24,8 @@ type SubTab =
   | "trend"
   | "primer"
   | "sec"
-  | "documents";
+  | "documents"
+  | "radar";
 
 function isClarification(r: QueryResponse): r is ClarificationResponse {
   return r.result_type === "clarification";
@@ -73,10 +75,10 @@ export function StockPanel() {
     <div className="panel">
       <div className="sub-nav no-print">
         {(
-          ["research", "dashboard", "watchlist", "portfolio", "pairs", "compare", "trend", "primer", "sec", "documents"] as SubTab[]
+          ["research", "dashboard", "watchlist", "portfolio", "pairs", "compare", "trend", "primer", "sec", "documents", "radar"] as SubTab[]
         ).map((t) => (
           <button key={t} type="button" className={subTab === t ? "active" : ""} onClick={() => setSubTab(t)}>
-            {t === "sec" ? "SEC Insights" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "sec" ? "SEC Insights" : t === "radar" ? "Opportunity Radar" : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
@@ -111,6 +113,7 @@ export function StockPanel() {
       {subTab === "primer" && <PrimerPanel />}
       {subTab === "sec" && <SECInsightsPanel />}
       {subTab === "documents" && <DocumentInsightsPanel />}
+      {subTab === "radar" && <OpportunityRadarPanel />}
     </div>
   );
 }

@@ -17,6 +17,13 @@ class ValuationSummary(BaseModel):
     market_cap: Optional[float] = None
     moat_assessment: str = ""
     key_metrics: dict[str, str] = Field(default_factory=dict)
+    # Deterministic passthrough facts set directly from fetched price data
+    # (never from the LLM response) — see FundamentalsAnalystAgent.analyze().
+    fifty_two_week_low: Optional[float] = None
+    fifty_two_week_high: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    volume: Optional[int] = None
+    shares_outstanding: Optional[int] = None
 
 
 class SentimentSummary(BaseModel):
@@ -145,6 +152,48 @@ class BacktestResult(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class EarningsCallSummary(BaseModel):
+    """
+    LLM summary of an earnings call transcript. Unlike every other LLM output
+    in this schema module, this one is genuinely LLM-authored prose over a
+    source document, not narration of pre-computed numbers — summarizing a
+    fixed transcript is a bounded text task, not arithmetic, so it's outside
+    the "no LLM does math" rule (see CLAUDE.md/AGENTS.md). Nothing here is a
+    number the LLM derived itself.
+
+    Source: Alpha Vantage's EARNINGS_CALL_TRANSCRIPT endpoint (available on
+    the free API key), optionally enriched with Equibles' verified speaker
+    roles / linked 8-K / extracted guidance when Equibles is running. See
+    agents/stock/earnings_call_summarizer.py.
+    """
+    quarter: Optional[str] = None                       # e.g. "2026Q2"
+    source: Literal["alpha_vantage"] = "alpha_vantage"
+    key_highlights: list[str] = Field(default_factory=list)
+    guidance: list[str] = Field(default_factory=list)
+    management_tone: Literal["confident", "cautious", "mixed", "defensive", "neutral"] = "neutral"
+    notable_qa: list[str] = Field(default_factory=list)
+    linked_8k_url: Optional[str] = None                  # populated only when Equibles enrichment is available
+
+
+class OptionsData(BaseModel):
+    """
+    Deterministic puts/calls volume, open-interest, and IV-skew snapshot from
+    the nearest listed expiries. No LLM involved in computing any of this —
+    see agents/stock/options_analyst.py.
+    """
+    put_call_volume_ratio: Optional[float] = None      # put volume / call volume, today
+    put_call_ratio_30d_avg: Optional[float] = None      # trailing 30d average of the above
+    unusual_call_activity: bool = False                 # ratio far below its 30d average
+    unusual_put_activity: bool = False                  # ratio far above its 30d average
+    iv_skew: Optional[float] = None                     # near-the-money put IV minus call IV
+    dominant_call_strike: Optional[float] = None        # strike with the most call open interest
+    dominant_put_strike: Optional[float] = None         # strike with the most put open interest
+    nearest_expiry: Optional[str] = None
+    total_call_volume: Optional[int] = None
+    total_put_volume: Optional[int] = None
+    summary: str = ""                                   # deterministic plain-English rollup
+
+
 class ResearchBrief(BaseModel):
     ticker: str
     company_name: str
@@ -166,6 +215,7 @@ class ResearchBrief(BaseModel):
     technicals: Optional[TechnicalIndicators] = None
     signals: Optional[SignalSet] = None
     backtest: Optional[BacktestResult] = None
+    options: Optional[OptionsData] = None
     sources: list[str] = Field(default_factory=list)
 
 

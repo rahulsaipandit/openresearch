@@ -10,8 +10,10 @@ import type {
   DocumentListResponse,
   DocumentType,
   DocumentUploadResult,
+  EarningsCallSummary,
   InterviewAnswerResult,
   InterviewPrepBrief,
+  OpportunityRadarResult,
   PairsAnalysisRequest,
   PairsAnalysisResult,
   PortfolioOptimizationResult,
@@ -97,6 +99,23 @@ export function askSECInsights(ticker: string, question: string, forceRefresh = 
 
 export function getTrend(ticker: string) {
   return request<TrendData>(`/api/stock-trend/${encodeURIComponent(ticker)}`);
+}
+
+export function getEarningsCallSummary(ticker: string, quarter?: string) {
+  return request<EarningsCallSummary>("/api/stock-earnings-call", {
+    method: "POST",
+    body: JSON.stringify({ ticker, quarter }),
+  });
+}
+
+// ── Opportunity Radar ─────────────────────────────────────────────────────────
+
+export function getOpportunityRadar() {
+  return request<OpportunityRadarResult>("/api/opportunity-radar");
+}
+
+export function refreshOpportunityRadar() {
+  return request<OpportunityRadarResult>("/api/opportunity-radar/refresh", { method: "POST" });
 }
 
 export function getWatchlist() {

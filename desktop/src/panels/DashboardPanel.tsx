@@ -1,16 +1,18 @@
 import { useState } from "react";
-import { getTrend, runStockResearch } from "../api";
-import type { ResearchBrief, TrendData } from "../types";
+import { getEarningsCallSummary, getTrend, runStockResearch } from "../api";
+import type { EarningsCallSummary, ResearchBrief, TrendData } from "../types";
 import { CitedText } from "../components/CitedText";
 import { FinancialChart } from "../components/FinancialChart";
 
 // One-page overview dashboard (ticker snapshot + price chart + income
 // statement + sentiment/outlook side rails), inspired by a reference
 // screenshot the user shared. Composed entirely from data the existing
-// pipeline already produces (ResearchBrief + TrendData) — no new agents,
-// no fabricated fields. Sections we have no real data source for
-// (executive bios, per-analyst-firm rating tables) are simply omitted
-// rather than invented.
+// pipeline already produces (ResearchBrief + TrendData), plus the
+// deterministic OptionsAnalyst snapshot (agents/stock/options_analyst.py —
+// see docs/designStock_DashboardUI.md). Sections we have no real data
+// source for (executive bios, per-analyst-firm rating tables, Opportunity
+// Radar sector themes, earnings call summaries) are simply omitted rather
+// than invented — tracked as future work in the design doc.
 
 function fmtMoney(n: number | null | undefined): string {
   if (n == null) return "N/A";
@@ -28,12 +30,23 @@ function fmtNum(n: number | null | undefined, digits = 2): string {
   return n == null ? "N/A" : n.toFixed(digits);
 }
 
+function fmtCompact(n: number | null | undefined): string {
+  if (n == null) return "N/A";
+  if (Math.abs(n) >= 1e9) return `${(n / 1e9).toFixed(2)}B`;
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (Math.abs(n) >= 1e3) return `${(n / 1e3).toFixed(2)}K`;
+  return n.toLocaleString();
+}
+
 export function DashboardPanel() {
   const [ticker, setTicker] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [brief, setBrief] = useState<ResearchBrief | null>(null);
   const [trend, setTrend] = useState<TrendData | null>(null);
+  const [earningsCall, setEarningsCall] = useState<EarningsCallSummary | null>(null);
+  const [earningsCallLoading, setEarningsCallLoading] = useState(false);
+  const [earningsCallError, setEarningsCallError] = useState<string | null>(null);
 
   async function handleFetch() {
     if (!ticker.trim()) return;
@@ -41,6 +54,8 @@ export function DashboardPanel() {
     setError(null);
     setBrief(null);
     setTrend(null);
+    setEarningsCall(null);
+    setEarningsCallError(null);
     try {
       const [briefRes, trendRes] = await Promise.all([
         runStockResearch(ticker.trim(), "full"),
@@ -52,6 +67,22 @@ export function DashboardPanel() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Lazy-loaded on demand, not fetched alongside the rest of the dashboard —
+  // pulling and summarizing a full transcript is a separate, heavier LLM
+  // call (see agents/stock/earnings_call_summarizer.py).
+  async function handleLoadEarningsCall() {
+    if (!ticker.trim()) return;
+    setEarningsCallLoading(true);
+    setEarningsCallError(null);
+    try {
+      setEarningsCall(await getEarningsCallSummary(ticker.trim()));
+    } catch (e) {
+      setEarningsCallError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEarningsCallLoading(false);
     }
   }
 
@@ -85,6 +116,24 @@ export function DashboardPanel() {
                 Target ${brief.price_target_low.toFixed(0)}–${brief.price_target_high.toFixed(0)}
               </div>
               <div className={`stat-badge sentiment-${brief.sentiment.tone}`}>{brief.sentiment.tone}</div>
+            </div>
+            <div className="stat-row">
+              <div className="stat-badge">Market Cap {fmtMoney(brief.fundamentals.market_cap)}</div>
+              <div className="stat-badge">P/E {fmtNum(brief.fundamentals.pe_ratio)}</div>
+              {(brief.fundamentals.fifty_two_week_low != null || brief.fundamentals.fifty_two_week_high != null) && (
+                <div className="stat-badge">
+                  52wk {fmtNum(brief.fundamentals.fifty_two_week_low, 0)}–{fmtNum(brief.fundamentals.fifty_two_week_high, 0)}
+                </div>
+              )}
+              {brief.fundamentals.dividend_yield != null && (
+                <div className="stat-badge">Div Yield {fmtPct(brief.fundamentals.dividend_yield)}</div>
+              )}
+              {brief.fundamentals.volume != null && (
+                <div className="stat-badge">Volume {fmtCompact(brief.fundamentals.volume)}</div>
+              )}
+              {brief.fundamentals.shares_outstanding != null && (
+                <div className="stat-badge">Shares Out {fmtCompact(brief.fundamentals.shares_outstanding)}</div>
+              )}
             </div>
           </div>
 
@@ -162,6 +211,50 @@ export function DashboardPanel() {
                 </div>
               )}
 
+              {brief.options && (
+                <div className="card">
+                  <h4>Puts &amp; Calls</h4>
+                  <table className="kv-table">
+                    <tbody>
+                      {brief.options.put_call_volume_ratio != null && (
+                        <tr>
+                          <th>Put/Call Ratio</th>
+                          <td>
+                            {fmtNum(brief.options.put_call_volume_ratio)}
+                            {brief.options.put_call_ratio_30d_avg != null &&
+                              ` (30d avg ${fmtNum(brief.options.put_call_ratio_30d_avg)})`}
+                          </td>
+                        </tr>
+                      )}
+                      {brief.options.dominant_call_strike != null && (
+                        <tr>
+                          <th>Top Call Strike</th>
+                          <td>${fmtNum(brief.options.dominant_call_strike, 0)}</td>
+                        </tr>
+                      )}
+                      {brief.options.dominant_put_strike != null && (
+                        <tr>
+                          <th>Top Put Strike</th>
+                          <td>${fmtNum(brief.options.dominant_put_strike, 0)}</td>
+                        </tr>
+                      )}
+                      {brief.options.iv_skew != null && (
+                        <tr>
+                          <th>IV Skew (put − call)</th>
+                          <td>{fmtNum(brief.options.iv_skew, 3)}</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                  {(brief.options.unusual_call_activity || brief.options.unusual_put_activity) && (
+                    <p className={`stat-badge ${brief.options.unusual_call_activity ? "sentiment-bullish" : "sentiment-bearish"}`}>
+                      {brief.options.unusual_call_activity ? "Unusual call activity" : "Unusual put activity"}
+                    </p>
+                  )}
+                  {brief.options.summary && <p className="muted">{brief.options.summary}</p>}
+                </div>
+              )}
+
               {brief.market_structure && brief.market_structure.recent_insider_transactions.length > 0 && (
                 <div className="card">
                   <h4>Insider Trades</h4>
@@ -229,6 +322,65 @@ export function DashboardPanel() {
                     },
                   ]}
                 />
+              </div>
+
+              <div className="card">
+                <h4>Earnings Call Summary</h4>
+                {!earningsCall && !earningsCallLoading && (
+                  <button type="button" onClick={handleLoadEarningsCall}>
+                    Load Earnings Call Summary
+                  </button>
+                )}
+                {earningsCallLoading && <p className="muted">Fetching and summarizing transcript...</p>}
+                {earningsCallError && <div className="error-banner">{earningsCallError}</div>}
+                {earningsCall && (
+                  <div>
+                    <p className="muted">
+                      {earningsCall.quarter}
+                      {" · "}
+                      <span className={`sentiment-${earningsCall.management_tone === "confident" ? "bullish" : earningsCall.management_tone === "defensive" || earningsCall.management_tone === "cautious" ? "bearish" : "neutral"}`}>
+                        {earningsCall.management_tone} tone
+                      </span>
+                    </p>
+                    {earningsCall.key_highlights.length > 0 && (
+                      <>
+                        <h5>Highlights</h5>
+                        <ul>
+                          {earningsCall.key_highlights.map((h, i) => (
+                            <li key={i}>{h}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {earningsCall.guidance.length > 0 && (
+                      <>
+                        <h5>Guidance</h5>
+                        <ul>
+                          {earningsCall.guidance.map((g, i) => (
+                            <li key={i}>{g}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {earningsCall.notable_qa.length > 0 && (
+                      <>
+                        <h5>Notable Q&amp;A</h5>
+                        <ul className="nested-list">
+                          {earningsCall.notable_qa.map((qa, i) => (
+                            <li key={i}>{qa}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {earningsCall.linked_8k_url && (
+                      <p className="muted">
+                        <a href={earningsCall.linked_8k_url} target="_blank" rel="noreferrer">
+                          Linked 8-K filing
+                        </a>
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="card">

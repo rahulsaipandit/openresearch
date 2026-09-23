@@ -27,6 +27,7 @@ from schemas.stock import (
     TechnicalIndicators,
     SignalSet,
     BacktestResult,
+    OptionsData,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class ResearchSynthesizerAgent:
         technicals_raw: dict | None = None,
         signals: SignalSet | None = None,
         backtest: BacktestResult | None = None,
+        options: OptionsData | None = None,
     ) -> ResearchBrief:
         """
         Synthesize all research signals into a ResearchBrief.
@@ -86,10 +88,11 @@ class ResearchSynthesizerAgent:
           1. Injected into the LLM prompt so the brief cites real signals.
           2. Parsed into typed schema objects and attached to the returned ResearchBrief.
 
-        signals/backtest come from SignalAgent + BacktestEngine (deterministic,
-        no LLM — see agents/stock/signal_agent.py, agents/stock/backtest_engine.py,
-        source reference https://arxiv.org/abs/2607.15414). They are already typed,
-        so they're injected into the prompt as pre-computed facts to narrate and
+        signals/backtest/options come from SignalAgent + BacktestEngine + OptionsAnalyst
+        (deterministic, no LLM — see agents/stock/signal_agent.py,
+        agents/stock/backtest_engine.py, agents/stock/options_analyst.py, source
+        reference https://arxiv.org/abs/2607.15414). They are already typed, so
+        they're injected into the prompt as pre-computed facts to narrate and
         attached to the brief as-is — never recomputed by the LLM.
         """
         from datetime import date
@@ -97,7 +100,7 @@ class ResearchSynthesizerAgent:
         prompt = self._build_prompt(
             ticker, price_data, fundamentals, sentiment,
             institutional_raw, market_structure_raw, technicals_raw,
-            signals, backtest,
+            signals, backtest, options,
         )
 
         if self.verbose:
@@ -125,6 +128,7 @@ class ResearchSynthesizerAgent:
             data["technicals"]       = technicals.model_dump() if technicals else None
             data["signals"]          = signals.model_dump() if signals else None
             data["backtest"]         = backtest.model_dump() if backtest else None
+            data["options"]          = options.model_dump() if options else None
             # Collect source URLs from news
             data.setdefault("sources", [
                 h.get("url", "") for h in news_data.get("headlines", [])[:5]
@@ -136,7 +140,7 @@ class ResearchSynthesizerAgent:
             return self._fallback_brief(
                 ticker, price_data, fundamentals, sentiment,
                 institutional, market_structure, technicals,
-                signals, backtest,
+                signals, backtest, options,
             )
 
     # ── Prompt builder ─────────────────────────────────────────────────────────
@@ -152,6 +156,7 @@ class ResearchSynthesizerAgent:
         technicals_raw: dict | None,
         signals: SignalSet | None = None,
         backtest: BacktestResult | None = None,
+        options: OptionsData | None = None,
     ) -> str:
         from datetime import date
 
@@ -307,6 +312,26 @@ class ResearchSynthesizerAgent:
                 )
             lines.append(f"  Trades generated: {backtest.num_trades}")
 
+        if options:
+            lines.append("\n=== Options Activity (deterministic, no LLM) ===")
+            if options.summary:
+                lines.append(f"  {options.summary}")
+            if options.put_call_volume_ratio is not None:
+                lines.append(f"  Put/call volume ratio: {options.put_call_volume_ratio}")
+            if options.put_call_ratio_30d_avg is not None:
+                lines.append(f"  30-day average put/call ratio: {options.put_call_ratio_30d_avg}")
+            if options.unusual_call_activity:
+                lines.append("  Flag: call volume unusually high vs. recent average")
+            if options.unusual_put_activity:
+                lines.append("  Flag: put volume unusually high vs. recent average")
+            if options.iv_skew is not None:
+                lines.append(f"  Near-the-money IV skew (put - call): {options.iv_skew:.3f}")
+            lines.append(
+                "  Interpret this as positioning/hedging activity, not a price prediction — "
+                "explain what the ratio and strike concentration suggest about how options "
+                "traders are positioned into the next earnings/catalyst window."
+            )
+
         lines.append(f"\nWrite a ResearchBrief JSON matching this schema:\n{BRIEF_SCHEMA}")
         return "\n".join(lines)
 
@@ -418,6 +443,7 @@ class ResearchSynthesizerAgent:
         technicals: TechnicalIndicators | None = None,
         signals: SignalSet | None = None,
         backtest: BacktestResult | None = None,
+        options: OptionsData | None = None,
     ) -> ResearchBrief:
         from datetime import date
         return ResearchBrief(
@@ -440,5 +466,6 @@ class ResearchSynthesizerAgent:
             technicals=technicals,
             signals=signals,
             backtest=backtest,
+            options=options,
             sources=[],
         )

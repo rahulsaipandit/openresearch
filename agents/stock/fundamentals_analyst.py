@@ -59,10 +59,20 @@ class FundamentalsAnalystAgent:
 
         try:
             data = json.loads(raw)
-            return ValuationSummary(**data)
+            summary = ValuationSummary(**data)
         except Exception as e:
             logger.warning(f"FundamentalsAnalyst JSON parse failed: {e}\nRaw: {raw[:300]}")
-            return self._fallback_summary(price_data)
+            summary = self._fallback_summary(price_data)
+
+        # Raw facts (52-week range, dividend yield, volume, shares out) are set
+        # directly from the fetched data, never trusted from the LLM's JSON —
+        # same "no LLM does math/facts" rule as the rest of this pipeline.
+        summary.fifty_two_week_low = price_data.get("52w_low")
+        summary.fifty_two_week_high = price_data.get("52w_high")
+        summary.dividend_yield = price_data.get("dividend_yield")
+        summary.volume = price_data.get("volume")
+        summary.shares_outstanding = price_data.get("shares_outstanding")
+        return summary
 
     def _build_prompt(self, ticker: str, price_data: dict, financials: dict) -> str:
         lines = [f"Ticker: {ticker}"]

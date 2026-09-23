@@ -31,10 +31,12 @@ class DataFetcherAgent:
         alpha_vantage_key: str = "",
         polygon_key: str = "",
         mcp=None,                 # MCPClient | None — injected by pipeline
+        data_dir: str = "data",   # honored by OptionsHistoryStore — see fetch()
     ):
         self.alpha_vantage_key = alpha_vantage_key
         self.polygon_key       = polygon_key
         self.mcp               = mcp
+        self.data_dir          = data_dir
 
     def fetch(self, ticker: str, depth: str = "full") -> dict:
         """
@@ -48,6 +50,7 @@ class DataFetcherAgent:
           market_structure    — Equibles short interest + insider activity (depth=full + Equibles)
           technicals          — Equibles computed technical indicators (Equibles running)
           signals             — SignalAgent candlestick patterns + buy/sell triggers (depth=full)
+          options             — OptionsAnalyst puts/calls volume + IV skew snapshot (depth=full)
 
         Missing sections are empty dicts / None — callers must handle gracefully.
         """
@@ -61,6 +64,7 @@ class DataFetcherAgent:
             "market_structure": None,   # populated by Equibles when available
             "technicals":       None,   # populated by Equibles when available
             "signals":          None,   # populated by SignalAgent when depth="full"
+            "options":          None,   # populated by OptionsAnalyst when depth="full"
         }
 
         result["price_data"] = self._fetch_yahoo(ticker)
@@ -84,6 +88,16 @@ class DataFetcherAgent:
                 result["signals"] = SignalAgent().generate(ticker)
             except Exception as e:
                 logger.warning(f"SignalAgent failed for {ticker}: {e}")
+
+            # Deterministic puts/calls snapshot — no LLM (see agents/stock/options_analyst.py)
+            from agents.stock.options_analyst import OptionsAnalyst
+            from store.options_history_store import OptionsHistoryStore
+            try:
+                from pathlib import Path
+                store = OptionsHistoryStore(Path(self.data_dir) / "options_history.json")
+                result["options"] = OptionsAnalyst(store=store).analyze(ticker)
+            except Exception as e:
+                logger.warning(f"OptionsAnalyst failed for {ticker}: {e}")
 
         return result
 
@@ -116,6 +130,9 @@ class DataFetcherAgent:
                 "short_ratio":      info.get("shortRatio"),
                 "beta":             info.get("beta"),
                 "dividend_yield":   info.get("dividendYield"),
+                # `or` would treat a real 0 (halted/pre-market ticker) as missing.
+                "volume":           info.get("volume") if info.get("volume") is not None else info.get("regularMarketVolume"),
+                "shares_outstanding": info.get("sharesOutstanding"),
                 "business_summary": info.get("longBusinessSummary", "")[:500],
             }
         except Exception as e:
